@@ -1,0 +1,3 @@
+agentcore-agents/basic-strands-agent/.bedrock_agentcore.yaml
+agentcore-agents/basic-strands-agent/.dockerignore
+agentcore-agents/basic-strands-agent/Dockerfile
