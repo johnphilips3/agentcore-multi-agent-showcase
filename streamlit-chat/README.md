@@ -43,8 +43,8 @@ Your AWS credentials need the following permissions:
 1. **Clone the repository**:
 
    ```bash
-   git clone https://github.com/awslabs/amazon-bedrock-agentcore-samples.git
-   cd amazon-bedrock-agentcore-samples/03-integrations/ux-examples/streamlit-chat
+   git clone https://github.com/johnphilips3/agentcore-multi-agent-showcase.git
+   cd streamlit-chat
    ```
 
 2. **Install dependencies using uv**:
@@ -61,21 +61,7 @@ Your AWS credentials need the following permissions:
 uv sync --dev
 ```
 
-2. **Configure the agent**:
-
-```bash
-cd example
-uv run agentcore configure -e agent.py
-```
-
-3. **Deploy to AgentCore Runtime**:
-
-```bash
-uv run agentcore launch
-cd ..
-```
-
-## Running the Application
+2. ## Running the Chat Application
 
 ### Using uv (recommended)
 
@@ -105,7 +91,6 @@ The application will start and be available at `http://localhost:8501`.
 ```
 streamlit-chat/
 ├── app.py                    # Main Streamlit application
-├── example.py                # Example agent
 ├── static/                   # UI assets (fonts, icons, logos)
 ├── pyproject.toml            # Project dependencies
 └── README.md                 # This file
