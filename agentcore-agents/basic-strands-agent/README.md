@@ -48,14 +48,13 @@ uv sync --dev
 2. **Configure the agent**:
 
 ```bash
-uv run agentcore configure -e agent.py
+uv run agentcore configure -e basic_strands_agent.py
 ```
 
 3. **Deploy to AgentCore Runtime**:
 
 ```bash
 uv run agentcore launch
-cd ..
 ```
 
 ## License
