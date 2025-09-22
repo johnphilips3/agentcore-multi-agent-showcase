@@ -1,483 +1,747 @@
 /**
- * Health Controller Tests
- * Unit tests for the Health Records REST controller
+ * Unit tests for HealthController
+ * Requirements: 3.1, 3.2, 3.3, 3.4
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { Request, Response } from 'express';
-import { HealthController } from '../health-controller.js';
-import { HealthService } from '../../../services/index.js';
-import { ApiErrorClass } from '../../errors.js';
-import { HealthRecord, CreateHealthRecordRequest, UpdateHealthRecordRequest } from '../../types.js';
+import { Request, Response, NextFunction } from 'express';
+import { HealthController, ApiResponse } from '../health-controller';
+import { HealthService } from '../../../services/health-service';
+import { HealthRecordFactory } from '../../../__tests__/data-factories';
+import { MockServiceFactory } from '../../../__tests__/mock-factories';
+import { CreateHealthRecordInput, UpdateHealthRecordInput } from '../../../models/health-record';
+import { RecordType } from '../../../models/common';
 
-// Mock HealthService
-const mockHealthService = {
-  findAll: vi.fn(),
-  create: vi.fn(),
-  findById: vi.fn(),
-  update: vi.fn(),
-  delete: vi.fn(),
-  findByAlpaca: vi.fn(),
-  findOverdueVaccinations: vi.fn(),
-  findByDateRange: vi.fn(),
-  findByRecordType: vi.fn(),
-  getHealthStats: vi.fn(),
-  getUpcomingReminders: vi.fn()
-} as any;
-
-// Mock request and response objects
-function createMockRequest(overrides: any = {}): any {
-  return {
-    params: {},
-    query: {},
-    body: {},
-    validatedBody: undefined,
-    validatedQuery: undefined,
-    pagination: { page: 1, limit: 20, offset: 0 },
-    ...overrides
-  };
-}
-
-function createMockResponse(): any {
-  const res = {
-    status: vi.fn().mockReturnThis(),
-    json: vi.fn().mockReturnThis(),
-    send: vi.fn().mockReturnThis()
-  };
-  return res;
-}
+// Mock the HealthService
+vi.mock('../../../services/health-service');
 
 describe('HealthController', () => {
   let controller: HealthController;
-  let req: any;
-  let res: any;
+  let mockHealthService: jest.Mocked<HealthService>;
+  let mockRequest: Partial<Request>;
+  let mockResponse: Partial<Response>;
+  let mockNext: NextFunction;
 
   beforeEach(() => {
-    controller = new HealthController(mockHealthService);
-    req = createMockRequest();
-    res = createMockResponse();
     vi.clearAllMocks();
+    
+    // Create mock service
+    mockHealthService = {
+      getAllHealthRecords: vi.fn(),
+      createHealthRecord: vi.fn(),
+      getHealthRecord: vi.fn(),
+      updateHealthRecord: vi.fn(),
+      deleteHealthRecord: vi.fn(),
+      getHealthRecordsByAlpaca: vi.fn(),
+      getHealthRecordsByType: vi.fn(),
+      getOverdueVaccinations: vi.fn(),
+      getHealthAlerts: vi.fn(),
+      getHealthSummary: vi.fn()
+    } as any;
+
+    // Create controller instance
+    controller = new HealthController(mockHealthService);
+
+    // Create mock Express objects
+    mockRequest = MockServiceFactory.createMockRequest();
+    mockResponse = MockServiceFactory.createMockResponse();
+    mockNext = MockServiceFactory.createMockNext();
   });
 
-  describe('listHealthRecords', () => {
-    it('should list health records with pagination', async () => {
-      const mockHealthRecords = [
-        { 
-          id: '1', 
-          alpacaId: 'alpaca1', 
-          recordType: 'vaccination', 
-          date: '2023-01-01',
-          description: 'Annual vaccination'
-        },
-        { 
-          id: '2', 
-          alpacaId: 'alpaca2', 
-          recordType: 'checkup', 
-          date: '2023-01-02',
-          description: 'Routine checkup'
-        }
-      ];
-      
-      mockHealthService.findAll.mockResolvedValue({
-        healthRecords: mockHealthRecords,
-        total: 2
-      });
-
-      await controller.listHealthRecords(req, res);
-
-      expect(mockHealthService.findAll).toHaveBeenCalledWith({
+  describe('getAllHealthRecords', () => {
+    it('should return paginated health records with default pagination', async () => {
+      // Arrange
+      const mockRecords = HealthRecordFactory.createMultiple(3);
+      const mockResult = {
+        data: mockRecords,
+        page: 1,
         limit: 20,
-        offset: 0
-      });
+        total: 3,
+        totalPages: 1
+      };
+      mockHealthService.getAllHealthRecords.mockResolvedValue(mockResult);
+      mockRequest.query = {};
 
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      // Act
+      await controller.getAllHealthRecords(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockHealthService.getAllHealthRecords).toHaveBeenCalledWith({
+        limit: 20,
+        offset: 0,
+        sortBy: undefined,
+        sortOrder: 'desc'
+      });
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
-        data: mockHealthRecords,
+        data: mockRecords,
         pagination: {
           page: 1,
           limit: 20,
-          total: 2,
+          total: 3,
           totalPages: 1
         }
       });
     });
 
-    it('should handle query parameters', async () => {
-      req.validatedQuery = {
-        alpacaId: 'alpaca1',
-        recordType: 'vaccination',
-        dateFrom: '2023-01-01',
-        dateTo: '2023-12-31'
+    it('should handle custom pagination and sorting parameters', async () => {
+      // Arrange
+      const mockRecords = HealthRecordFactory.createMultiple(2);
+      const mockResult = {
+        data: mockRecords,
+        page: 2,
+        limit: 10,
+        total: 25,
+        totalPages: 3
+      };
+      mockHealthService.getAllHealthRecords.mockResolvedValue(mockResult);
+      mockRequest.query = {
+        page: '2',
+        limit: '10',
+        sortBy: 'date',
+        sortOrder: 'asc'
       };
 
-      mockHealthService.findAll.mockResolvedValue({
-        healthRecords: [],
-        total: 0
-      });
+      // Act
+      await controller.getAllHealthRecords(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await controller.listHealthRecords(req, res);
-
-      expect(mockHealthService.findAll).toHaveBeenCalledWith({
-        alpacaId: 'alpaca1',
-        recordType: 'vaccination',
-        dateFrom: '2023-01-01',
-        dateTo: '2023-12-31',
-        limit: 20,
-        offset: 0
+      // Assert
+      expect(mockHealthService.getAllHealthRecords).toHaveBeenCalledWith({
+        limit: 10,
+        offset: 10,
+        sortBy: 'date',
+        sortOrder: 'asc'
       });
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: mockRecords,
+        pagination: {
+          page: mockResult.page,
+          limit: mockResult.limit,
+          total: mockResult.total,
+          totalPages: mockResult.totalPages
+        }
+      });
+    });
+
+    it('should handle service errors', async () => {
+      // Arrange
+      const error = new Error('Database connection failed');
+      mockHealthService.getAllHealthRecords.mockRejectedValue(error);
+      mockRequest.query = {};
+
+      // Act
+      await controller.getAllHealthRecords(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
   describe('createHealthRecord', () => {
-    it('should create a new health record', async () => {
-      const createRequest: CreateHealthRecordRequest = {
-        alpacaId: 'alpaca1',
-        recordType: 'vaccination',
-        date: '2023-01-01',
-        description: 'Annual vaccination',
-        veterinarian: 'Dr. Smith'
-      };
+    it('should create health record successfully', async () => {
+      // Arrange
+      const inputData = HealthRecordFactory.createInput();
+      const createdRecord = HealthRecordFactory.create(inputData);
+      mockHealthService.createHealthRecord.mockResolvedValue(createdRecord);
+      mockRequest.body = inputData;
 
-      const createdHealthRecord: HealthRecord = {
-        id: 'new-id',
-        ...createRequest,
-        createdAt: '2023-01-01T00:00:00Z'
-      };
+      // Act
+      await controller.createHealthRecord(mockRequest as Request, mockResponse as Response, mockNext);
 
-      req.validatedBody = createRequest;
-      mockHealthService.create.mockResolvedValue(createdHealthRecord);
-
-      await controller.createHealthRecord(req, res);
-
-      expect(mockHealthService.create).toHaveBeenCalledWith(createRequest);
-      expect(res.status).toHaveBeenCalledWith(201);
-      expect(res.json).toHaveBeenCalledWith({
+      // Assert
+      expect(mockHealthService.createHealthRecord).toHaveBeenCalledWith(inputData);
+      expect(mockResponse.status).toHaveBeenCalledWith(201);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
-        data: createdHealthRecord
+        data: createdRecord
       });
+    });
+
+    it('should handle string date conversion', async () => {
+      // Arrange
+      const inputData = HealthRecordFactory.createInput();
+      const inputWithStringDates = {
+        ...inputData,
+        date: '2024-01-01T00:00:00.000Z',
+        nextDueDate: '2024-12-01T00:00:00.000Z'
+      };
+      const createdRecord = HealthRecordFactory.create(inputData);
+      mockHealthService.createHealthRecord.mockResolvedValue(createdRecord);
+      mockRequest.body = inputWithStringDates;
+
+      // Act
+      await controller.createHealthRecord(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      const expectedInput = {
+        ...inputWithStringDates,
+        date: new Date('2024-01-01T00:00:00.000Z'),
+        nextDueDate: new Date('2024-12-01T00:00:00.000Z')
+      };
+      expect(mockHealthService.createHealthRecord).toHaveBeenCalledWith(expectedInput);
+    });
+
+    it('should handle partial date conversion', async () => {
+      // Arrange
+      const inputData = HealthRecordFactory.createInput();
+      const inputWithPartialStringDates = {
+        ...inputData,
+        date: '2024-01-01T00:00:00.000Z',
+        nextDueDate: undefined
+      };
+      const createdRecord = HealthRecordFactory.create(inputData);
+      mockHealthService.createHealthRecord.mockResolvedValue(createdRecord);
+      mockRequest.body = inputWithPartialStringDates;
+
+      // Act
+      await controller.createHealthRecord(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      const expectedInput = {
+        ...inputWithPartialStringDates,
+        date: new Date('2024-01-01T00:00:00.000Z')
+      };
+      expect(mockHealthService.createHealthRecord).toHaveBeenCalledWith(expectedInput);
+    });
+
+    it('should handle service validation errors', async () => {
+      // Arrange
+      const inputData = HealthRecordFactory.createInput();
+      const validationError = new Error('Invalid health record data');
+      mockHealthService.createHealthRecord.mockRejectedValue(validationError);
+      mockRequest.body = inputData;
+
+      // Act
+      await controller.createHealthRecord(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(validationError);
     });
   });
 
   describe('getHealthRecord', () => {
-    it('should get health record by ID', async () => {
-      const healthRecord: HealthRecord = {
-        id: 'test-id',
-        alpacaId: 'alpaca1',
-        recordType: 'vaccination',
-        date: '2023-01-01',
-        description: 'Annual vaccination',
-        createdAt: '2023-01-01T00:00:00Z'
-      };
+    it('should return health record when found', async () => {
+      // Arrange
+      const healthRecord = HealthRecordFactory.create();
+      mockHealthService.getHealthRecord.mockResolvedValue(healthRecord);
+      mockRequest.params = { id: healthRecord.id };
 
-      req.params = { id: 'test-id' };
-      mockHealthService.findById.mockResolvedValue(healthRecord);
+      // Act
+      await controller.getHealthRecord(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await controller.getHealthRecord(req, res);
-
-      expect(mockHealthService.findById).toHaveBeenCalledWith('test-id');
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      // Assert
+      expect(mockHealthService.getHealthRecord).toHaveBeenCalledWith(healthRecord.id);
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
         data: healthRecord
       });
     });
 
-    it('should throw not found error when health record does not exist', async () => {
-      req.params = { id: 'non-existent-id' };
-      mockHealthService.findById.mockResolvedValue(null);
+    it('should return 404 when health record not found', async () => {
+      // Arrange
+      const recordId = 'non-existent-id';
+      mockHealthService.getHealthRecord.mockResolvedValue(null);
+      mockRequest.params = { id: recordId };
 
-      await expect(controller.getHealthRecord(req, res)).rejects.toThrow(ApiErrorClass);
-      
-      expect(mockHealthService.findById).toHaveBeenCalledWith('non-existent-id');
+      // Act
+      await controller.getHealthRecord(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockHealthService.getHealthRecord).toHaveBeenCalledWith(recordId);
+      expect(mockResponse.status).toHaveBeenCalledWith(404);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Health record not found'
+        }
+      });
+    });
+
+    it('should handle service errors', async () => {
+      // Arrange
+      const recordId = 'test-id';
+      const error = new Error('Database error');
+      mockHealthService.getHealthRecord.mockRejectedValue(error);
+      mockRequest.params = { id: recordId };
+
+      // Act
+      await controller.getHealthRecord(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
   describe('updateHealthRecord', () => {
-    it('should update health record', async () => {
-      const updateRequest: UpdateHealthRecordRequest = {
-        description: 'Updated vaccination record',
-        veterinarian: 'Dr. Johnson'
-      };
+    it('should update health record successfully', async () => {
+      // Arrange
+      const recordId = 'test-id';
+      const updateData = HealthRecordFactory.updateInput();
+      const updatedRecord = HealthRecordFactory.create({ id: recordId, ...updateData });
+      mockHealthService.updateHealthRecord.mockResolvedValue(updatedRecord);
+      mockRequest.params = { id: recordId };
+      mockRequest.body = updateData;
 
-      const updatedHealthRecord: HealthRecord = {
-        id: 'test-id',
-        alpacaId: 'alpaca1',
-        recordType: 'vaccination',
-        date: '2023-01-01',
-        description: 'Updated vaccination record',
-        veterinarian: 'Dr. Johnson',
-        createdAt: '2023-01-01T00:00:00Z'
-      };
+      // Act
+      await controller.updateHealthRecord(mockRequest as Request, mockResponse as Response, mockNext);
 
-      req.params = { id: 'test-id' };
-      req.validatedBody = updateRequest;
-      mockHealthService.update.mockResolvedValue(updatedHealthRecord);
-
-      await controller.updateHealthRecord(req, res);
-
-      expect(mockHealthService.update).toHaveBeenCalledWith('test-id', updateRequest);
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      // Assert
+      expect(mockHealthService.updateHealthRecord).toHaveBeenCalledWith(recordId, updateData);
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
-        data: updatedHealthRecord
+        data: updatedRecord
       });
+    });
+
+    it('should handle string date conversion in updates', async () => {
+      // Arrange
+      const recordId = 'test-id';
+      const updateData = {
+        ...HealthRecordFactory.updateInput(),
+        date: '2024-01-01T00:00:00.000Z',
+        nextDueDate: '2024-12-01T00:00:00.000Z'
+      };
+      const updatedRecord = HealthRecordFactory.create({ id: recordId });
+      mockHealthService.updateHealthRecord.mockResolvedValue(updatedRecord);
+      mockRequest.params = { id: recordId };
+      mockRequest.body = updateData;
+
+      // Act
+      await controller.updateHealthRecord(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      const expectedUpdateData = {
+        ...updateData,
+        date: new Date('2024-01-01T00:00:00.000Z'),
+        nextDueDate: new Date('2024-12-01T00:00:00.000Z')
+      };
+      expect(mockHealthService.updateHealthRecord).toHaveBeenCalledWith(recordId, expectedUpdateData);
+    });
+
+    it('should return 404 when health record not found for update', async () => {
+      // Arrange
+      const recordId = 'non-existent-id';
+      const updateData = HealthRecordFactory.updateInput();
+      mockHealthService.updateHealthRecord.mockResolvedValue(null);
+      mockRequest.params = { id: recordId };
+      mockRequest.body = updateData;
+
+      // Act
+      await controller.updateHealthRecord(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(404);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Health record not found'
+        }
+      });
+    });
+
+    it('should handle service errors during update', async () => {
+      // Arrange
+      const recordId = 'test-id';
+      const updateData = HealthRecordFactory.updateInput();
+      const error = new Error('Update failed');
+      mockHealthService.updateHealthRecord.mockRejectedValue(error);
+      mockRequest.params = { id: recordId };
+      mockRequest.body = updateData;
+
+      // Act
+      await controller.updateHealthRecord(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
   describe('deleteHealthRecord', () => {
-    it('should delete health record', async () => {
-      req.params = { id: 'test-id' };
-      mockHealthService.delete.mockResolvedValue(true);
+    it('should delete health record successfully', async () => {
+      // Arrange
+      const recordId = 'test-id';
+      mockHealthService.deleteHealthRecord.mockResolvedValue(true);
+      mockRequest.params = { id: recordId };
 
-      await controller.deleteHealthRecord(req, res);
+      // Act
+      await controller.deleteHealthRecord(mockRequest as Request, mockResponse as Response, mockNext);
 
-      expect(mockHealthService.delete).toHaveBeenCalledWith('test-id');
-      expect(res.status).toHaveBeenCalledWith(204);
-      expect(res.send).toHaveBeenCalled();
-    });
-
-    it('should throw not found error when health record does not exist', async () => {
-      req.params = { id: 'non-existent-id' };
-      mockHealthService.delete.mockResolvedValue(false);
-
-      await expect(controller.deleteHealthRecord(req, res)).rejects.toThrow(ApiErrorClass);
-      
-      expect(mockHealthService.delete).toHaveBeenCalledWith('non-existent-id');
-    });
-  });
-
-  describe('getAlpacaHealthRecords', () => {
-    it('should get health records for alpaca', async () => {
-      const healthRecords = [
-        { 
-          id: '1', 
-          alpacaId: 'alpaca1', 
-          recordType: 'vaccination', 
-          date: '2023-01-01',
-          description: 'Vaccination'
-        }
-      ];
-
-      req.params = { id: 'alpaca1' };
-      req.query = {};
-      mockHealthService.findByAlpaca.mockResolvedValue(healthRecords);
-
-      await controller.getAlpacaHealthRecords(req, res);
-
-      expect(mockHealthService.findByAlpaca).toHaveBeenCalledWith('alpaca1', { alpacaId: 'alpaca1' });
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      // Assert
+      expect(mockHealthService.deleteHealthRecord).toHaveBeenCalledWith(recordId);
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
-        data: healthRecords
+        data: { message: 'Health record deleted successfully' }
       });
     });
 
-    it('should handle query filters', async () => {
-      const healthRecords = [];
+    it('should return 404 when health record not found for deletion', async () => {
+      // Arrange
+      const recordId = 'non-existent-id';
+      mockHealthService.deleteHealthRecord.mockResolvedValue(false);
+      mockRequest.params = { id: recordId };
 
-      req.params = { id: 'alpaca1' };
-      req.query = {
-        recordType: 'vaccination',
-        dateFrom: '2023-01-01',
-        dateTo: '2023-12-31'
+      // Act
+      await controller.deleteHealthRecord(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(404);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Health record not found'
+        }
+      });
+    });
+
+    it('should handle service errors during deletion', async () => {
+      // Arrange
+      const recordId = 'test-id';
+      const error = new Error('Deletion failed');
+      mockHealthService.deleteHealthRecord.mockRejectedValue(error);
+      mockRequest.params = { id: recordId };
+
+      // Act
+      await controller.deleteHealthRecord(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
+    });
+  });
+
+  describe('getHealthRecordsByAlpaca', () => {
+    it('should return health records for specific alpaca', async () => {
+      // Arrange
+      const alpacaId = 'alpaca-123';
+      const mockRecords = HealthRecordFactory.createMultiple(3, alpacaId);
+      const mockResult = {
+        data: mockRecords,
+        page: 1,
+        limit: 20,
+        total: 3,
+        totalPages: 1
       };
-      mockHealthService.findByAlpaca.mockResolvedValue(healthRecords);
+      mockHealthService.getHealthRecordsByAlpaca.mockResolvedValue(mockResult);
+      mockRequest.params = { alpacaId };
+      mockRequest.query = {};
 
-      await controller.getAlpacaHealthRecords(req, res);
+      // Act
+      await controller.getHealthRecordsByAlpaca(mockRequest as Request, mockResponse as Response, mockNext);
 
-      expect(mockHealthService.findByAlpaca).toHaveBeenCalledWith('alpaca1', {
-        alpacaId: 'alpaca1',
-        recordType: 'vaccination',
-        dateFrom: '2023-01-01',
-        dateTo: '2023-12-31'
+      // Assert
+      expect(mockHealthService.getHealthRecordsByAlpaca).toHaveBeenCalledWith(alpacaId, {
+        limit: 20,
+        offset: 0
       });
-    });
-  });
-
-  describe('getOverdueVaccinations', () => {
-    it('should get overdue vaccinations', async () => {
-      const overdueRecords = [
-        { 
-          id: '1', 
-          alpacaId: 'alpaca1', 
-          recordType: 'vaccination', 
-          nextDueDate: '2022-12-01',
-          description: 'Overdue vaccination'
-        }
-      ];
-
-      mockHealthService.findOverdueVaccinations.mockResolvedValue(overdueRecords);
-
-      await controller.getOverdueVaccinations(req, res);
-
-      expect(mockHealthService.findOverdueVaccinations).toHaveBeenCalled();
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
-        data: overdueRecords
-      });
-    });
-  });
-
-  describe('getHealthRecordsByDateRange', () => {
-    it('should get health records by date range', async () => {
-      const healthRecords = [
-        { 
-          id: '1', 
-          alpacaId: 'alpaca1', 
-          recordType: 'vaccination', 
-          date: '2023-06-01',
-          description: 'Mid-year vaccination'
+        data: mockRecords,
+        pagination: {
+          page: mockResult.page,
+          limit: mockResult.limit,
+          total: mockResult.total,
+          totalPages: mockResult.totalPages
         }
-      ];
-
-      req.query = {
-        dateFrom: '2023-01-01',
-        dateTo: '2023-12-31'
-      };
-      mockHealthService.findByDateRange.mockResolvedValue(healthRecords);
-
-      await controller.getHealthRecordsByDateRange(req, res);
-
-      expect(mockHealthService.findByDateRange).toHaveBeenCalledWith('2023-01-01', '2023-12-31');
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
-        success: true,
-        data: healthRecords
       });
     });
 
-    it('should require dateFrom and dateTo parameters', async () => {
-      req.query = { dateFrom: '2023-01-01' }; // Missing dateTo
-
-      await expect(controller.getHealthRecordsByDateRange(req, res)).rejects.toThrow(ApiErrorClass);
-    });
-  });
-
-  describe('getHealthRecordsByType', () => {
-    it('should get health records by type', async () => {
-      const healthRecords = [
-        { 
-          id: '1', 
-          alpacaId: 'alpaca1', 
-          recordType: 'vaccination', 
-          date: '2023-01-01',
-          description: 'Vaccination record'
-        }
-      ];
-
-      req.params = { type: 'vaccination' };
-      req.query = {};
-      mockHealthService.findByRecordType.mockResolvedValue(healthRecords);
-
-      await controller.getHealthRecordsByType(req, res);
-
-      expect(mockHealthService.findByRecordType).toHaveBeenCalledWith('vaccination', undefined);
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
-        success: true,
-        data: healthRecords
-      });
-    });
-
-    it('should handle pagination for type query', async () => {
-      const result = {
-        healthRecords: [],
-        total: 0
-      };
-
-      req.params = { type: 'vaccination' };
-      req.query = { page: '2', limit: '10' };
-      mockHealthService.findByRecordType.mockResolvedValue(result);
-
-      await controller.getHealthRecordsByType(req, res);
-
-      expect(mockHealthService.findByRecordType).toHaveBeenCalledWith('vaccination', {
+    it('should handle pagination for alpaca health records', async () => {
+      // Arrange
+      const alpacaId = 'alpaca-123';
+      const mockResult = {
+        data: [],
         page: 2,
+        limit: 10,
+        total: 25,
+        totalPages: 3
+      };
+      mockHealthService.getHealthRecordsByAlpaca.mockResolvedValue(mockResult);
+      mockRequest.params = { alpacaId };
+      mockRequest.query = {
+        page: '2',
+        limit: '10'
+      };
+
+      // Act
+      await controller.getHealthRecordsByAlpaca(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockHealthService.getHealthRecordsByAlpaca).toHaveBeenCalledWith(alpacaId, {
         limit: 10,
         offset: 10
       });
     });
+
+    it('should handle service errors for alpaca health records', async () => {
+      // Arrange
+      const alpacaId = 'alpaca-123';
+      const error = new Error('Failed to fetch alpaca health records');
+      mockHealthService.getHealthRecordsByAlpaca.mockRejectedValue(error);
+      mockRequest.params = { alpacaId };
+      mockRequest.query = {};
+
+      // Act
+      await controller.getHealthRecordsByAlpaca(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
+    });
   });
 
-  describe('getAlpacaHealthStats', () => {
-    it('should get health statistics for alpaca', async () => {
-      const stats = {
-        totalRecords: 5,
-        vaccinationCount: 3,
-        treatmentCount: 1,
-        checkupCount: 1,
-        lastCheckup: '2023-06-01',
-        nextDueVaccination: '2024-01-01'
+  describe('getHealthRecordsByType', () => {
+    it('should return health records filtered by valid record type', async () => {
+      // Arrange
+      const recordType: RecordType = 'vaccination';
+      const mockRecords = HealthRecordFactory.createMultiple(3).map(r => ({ ...r, recordType }));
+      const mockResult = {
+        data: mockRecords,
+        page: 1,
+        limit: 20,
+        total: 3,
+        totalPages: 1
       };
+      mockHealthService.getHealthRecordsByType.mockResolvedValue(mockResult);
+      mockRequest.params = { recordType };
+      mockRequest.query = {};
 
-      req.params = { id: 'alpaca1' };
-      mockHealthService.getHealthStats.mockResolvedValue(stats);
+      // Act
+      await controller.getHealthRecordsByType(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await controller.getAlpacaHealthStats(req, res);
-
-      expect(mockHealthService.getHealthStats).toHaveBeenCalledWith('alpaca1');
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
-        success: true,
-        data: stats
+      // Assert
+      expect(mockHealthService.getHealthRecordsByType).toHaveBeenCalledWith(recordType, {
+        limit: 20,
+        offset: 0
       });
-    });
-  });
-
-  describe('getHealthReminders', () => {
-    it('should get upcoming health reminders with default days', async () => {
-      const reminders = [
-        { 
-          id: '1', 
-          alpacaId: 'alpaca1', 
-          recordType: 'vaccination', 
-          nextDueDate: '2023-12-15',
-          description: 'Upcoming vaccination'
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: mockRecords,
+        pagination: {
+          page: mockResult.page,
+          limit: mockResult.limit,
+          total: mockResult.total,
+          totalPages: mockResult.totalPages
         }
-      ];
-
-      req.query = {};
-      mockHealthService.getUpcomingReminders.mockResolvedValue(reminders);
-
-      await controller.getHealthReminders(req, res);
-
-      expect(mockHealthService.getUpcomingReminders).toHaveBeenCalledWith(30);
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
-        success: true,
-        data: reminders
       });
     });
 
-    it('should get upcoming health reminders with custom days', async () => {
-      const reminders = [];
+    it('should return 400 for invalid record type', async () => {
+      // Arrange
+      const invalidRecordType = 'invalid-type';
+      mockRequest.params = { recordType: invalidRecordType };
 
-      req.query = { days: '7' };
-      mockHealthService.getUpcomingReminders.mockResolvedValue(reminders);
+      // Act
+      await controller.getHealthRecordsByType(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await controller.getHealthReminders(req, res);
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(400);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'INVALID_RECORD_TYPE',
+          message: 'Record type must be one of: vaccination, checkup, treatment, medication, surgery, injury, illness, other'
+        }
+      });
+      expect(mockHealthService.getHealthRecordsByType).not.toHaveBeenCalled();
+    });
 
-      expect(mockHealthService.getUpcomingReminders).toHaveBeenCalledWith(7);
+    it('should handle all valid record types', async () => {
+      const validTypes: RecordType[] = ['vaccination', 'checkup', 'treatment', 'medication', 'surgery', 'injury', 'illness', 'other'];
+      
+      for (const recordType of validTypes) {
+        // Arrange
+        const mockResult = {
+          data: [],
+          page: 1,
+          limit: 20,
+          total: 0,
+          totalPages: 0
+        };
+        mockHealthService.getHealthRecordsByType.mockResolvedValue(mockResult);
+        mockRequest.params = { recordType };
+        mockRequest.query = {};
+
+        // Act
+        await controller.getHealthRecordsByType(mockRequest as Request, mockResponse as Response, mockNext);
+
+        // Assert
+        expect(mockHealthService.getHealthRecordsByType).toHaveBeenCalledWith(recordType, {
+          limit: 20,
+          offset: 0
+        });
+        expect(mockResponse.status).toHaveBeenCalledWith(200);
+        
+        // Reset mocks for next iteration
+        vi.clearAllMocks();
+        mockHealthService.getHealthRecordsByType = vi.fn();
+      }
+    });
+
+    it('should handle service errors for record type filtering', async () => {
+      // Arrange
+      const recordType: RecordType = 'vaccination';
+      const error = new Error('Failed to filter by record type');
+      mockHealthService.getHealthRecordsByType.mockRejectedValue(error);
+      mockRequest.params = { recordType };
+      mockRequest.query = {};
+
+      // Act
+      await controller.getHealthRecordsByType(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
-  describe('Error Handling', () => {
-    it('should handle service errors', async () => {
-      const error = new Error('Service error');
-      mockHealthService.findAll.mockRejectedValue(error);
+  describe('getOverdueVaccinations', () => {
+    it('should return overdue vaccinations', async () => {
+      // Arrange
+      const overdueRecords = HealthRecordFactory.createMultiple(2).map(r => ({
+        ...r,
+        recordType: 'vaccination' as RecordType,
+        nextDueDate: new Date(Date.now() - 86400000) // Yesterday
+      }));
+      mockHealthService.getOverdueVaccinations.mockResolvedValue(overdueRecords);
 
-      await expect(controller.listHealthRecords(req, res)).rejects.toThrow(error);
+      // Act
+      await controller.getOverdueVaccinations(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockHealthService.getOverdueVaccinations).toHaveBeenCalled();
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: overdueRecords
+      });
     });
 
-    it('should handle API errors', async () => {
-      const apiError = ApiErrorClass.validation('Invalid data');
-      mockHealthService.create.mockRejectedValue(apiError);
+    it('should handle empty overdue vaccinations list', async () => {
+      // Arrange
+      mockHealthService.getOverdueVaccinations.mockResolvedValue([]);
 
-      req.validatedBody = { alpacaId: 'test' };
+      // Act
+      await controller.getOverdueVaccinations(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await expect(controller.createHealthRecord(req, res)).rejects.toThrow(apiError);
+      // Assert
+      expect(mockHealthService.getOverdueVaccinations).toHaveBeenCalled();
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: []
+      });
+    });
+
+    it('should handle service errors for overdue vaccinations', async () => {
+      // Arrange
+      const error = new Error('Failed to fetch overdue vaccinations');
+      mockHealthService.getOverdueVaccinations.mockRejectedValue(error);
+
+      // Act
+      await controller.getOverdueVaccinations(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
+    });
+  });
+
+  describe('getHealthAlerts', () => {
+    it('should return health alerts', async () => {
+      // Arrange
+      const mockAlerts = [
+        { type: 'overdue_vaccination', count: 3, message: '3 alpacas have overdue vaccinations' },
+        { type: 'upcoming_checkup', count: 5, message: '5 alpacas need checkups soon' }
+      ];
+      mockHealthService.getHealthAlerts.mockResolvedValue(mockAlerts);
+
+      // Act
+      await controller.getHealthAlerts(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockHealthService.getHealthAlerts).toHaveBeenCalled();
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: mockAlerts
+      });
+    });
+
+    it('should handle empty alerts list', async () => {
+      // Arrange
+      mockHealthService.getHealthAlerts.mockResolvedValue([]);
+
+      // Act
+      await controller.getHealthAlerts(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockHealthService.getHealthAlerts).toHaveBeenCalled();
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: []
+      });
+    });
+
+    it('should handle service errors for health alerts', async () => {
+      // Arrange
+      const error = new Error('Failed to fetch health alerts');
+      mockHealthService.getHealthAlerts.mockRejectedValue(error);
+
+      // Act
+      await controller.getHealthAlerts(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
+    });
+  });
+
+  describe('getHealthSummary', () => {
+    it('should return health summary for alpaca', async () => {
+      // Arrange
+      const alpacaId = 'alpaca-123';
+      const mockSummary = {
+        alpacaId,
+        totalRecords: 10,
+        lastCheckup: new Date('2024-01-01'),
+        nextVaccination: new Date('2024-06-01'),
+        healthStatus: 'good',
+        recentRecords: HealthRecordFactory.createMultiple(3, alpacaId)
+      };
+      mockHealthService.getHealthSummary.mockResolvedValue(mockSummary);
+      mockRequest.params = { alpacaId };
+
+      // Act
+      await controller.getHealthSummary(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockHealthService.getHealthSummary).toHaveBeenCalledWith(alpacaId);
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: mockSummary
+      });
+    });
+
+    it('should handle service errors for health summary', async () => {
+      // Arrange
+      const alpacaId = 'alpaca-123';
+      const error = new Error('Failed to generate health summary');
+      mockHealthService.getHealthSummary.mockRejectedValue(error);
+      mockRequest.params = { alpacaId };
+
+      // Act
+      await controller.getHealthSummary(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 });

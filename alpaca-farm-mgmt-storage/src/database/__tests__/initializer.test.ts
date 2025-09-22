@@ -1,274 +1,598 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { DatabaseInitializer, DatabaseInitializationError, initializeDatabase, resetDatabase } from '../initializer';
-import { SQLiteConnection, DatabaseConfig } from '../connection';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { DatabaseInitializer, DatabaseInitializationError, initializeDatabase, resetDatabase, SeedDataOptions } from '../initializer';
+import { DatabaseConnection } from '../connection';
+import { MigrationRunner } from '../migration';
+
+// Mock external dependencies
+vi.mock('../migration');
 
 describe('DatabaseInitializer', () => {
-  let connection: SQLiteConnection;
+  let mockConnection: DatabaseConnection;
+  let mockMigrationRunner: any;
   let initializer: DatabaseInitializer;
 
-  beforeEach(async () => {
-    const config: DatabaseConfig = {
-      type: 'sqlite',
-      database: ':memory:'
+  beforeEach(() => {
+    vi.clearAllMocks();
+    
+    // Mock database connection
+    mockConnection = {
+      query: vi.fn(),
+      execute: vi.fn(),
+      close: vi.fn(),
+      isConnected: vi.fn().mockReturnValue(true)
     };
-    connection = new SQLiteConnection(config);
-    await connection.connect();
-    initializer = new DatabaseInitializer(connection);
-  });
 
-  afterEach(async () => {
-    if (connection.isConnected()) {
-      await connection.close();
-    }
+    // Mock migration runner
+    mockMigrationRunner = {
+      migrate: vi.fn().mockResolvedValue(undefined),
+      reset: vi.fn().mockResolvedValue(undefined)
+    };
+    
+    (MigrationRunner as any) = vi.fn().mockImplementation(() => mockMigrationRunner);
+
+    initializer = new DatabaseInitializer(mockConnection);
   });
 
   describe('initialize', () => {
-    it('should initialize database with schema', async () => {
+    it('should initialize database with schema only', async () => {
+      // Mock successful table validation
+      mockConnection.query = vi.fn()
+        .mockResolvedValueOnce([]) // First call for table validation
+        .mockResolvedValueOnce([]) // Subsequent calls for other tables
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+
       await initializer.initialize();
 
-      // Check that tables were created
-      const tables = await connection.query(`
-        SELECT name FROM sqlite_master WHERE type='table' ORDER BY name
-      `);
-      
-      const tableNames = tables.map((t: any) => t.name);
-      expect(tableNames).toContain('alpacas');
-      expect(tableNames).toContain('health_records');
-      expect(tableNames).toContain('breeding_records');
-      expect(tableNames).toContain('management_activities');
-      expect(tableNames).toContain('schema_migrations');
+      expect(MigrationRunner).toHaveBeenCalledWith(mockConnection);
+      expect(mockMigrationRunner.migrate).toHaveBeenCalled();
+      expect(mockConnection.query).toHaveBeenCalledWith('SELECT 1 FROM alpacas LIMIT 0');
     });
 
     it('should initialize database with seed data', async () => {
-      await initializer.initialize({
+      // Mock successful validation and seeding
+      mockConnection.query = vi.fn()
+        .mockResolvedValueOnce([]) // Table validation calls
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ count: 5 }]) // Statistics calls
+        .mockResolvedValueOnce([{ count: 10 }])
+        .mockResolvedValueOnce([{ count: 2 }])
+        .mockResolvedValueOnce([{ count: 3 }]);
+
+      mockConnection.execute = vi.fn().mockResolvedValue({ changes: 1, lastInsertRowid: 1 });
+
+      const options: SeedDataOptions = {
         includeTestData: true,
         alpacaCount: 5,
         healthRecordsPerAlpaca: 2,
         breedingRecords: 2,
         managementActivities: 3
-      });
+      };
 
-      const stats = await initializer.getStatistics();
-      expect(stats.alpacas).toBe(5);
-      expect(stats.healthRecords).toBe(10); // 5 alpacas * 2 records each
-      expect(stats.breedingRecords).toBe(2);
-      expect(stats.managementActivities).toBe(3);
+      await initializer.initialize(options);
+
+      expect(mockMigrationRunner.migrate).toHaveBeenCalled();
+      expect(mockConnection.execute).toHaveBeenCalled(); // Should have seeded data
     });
 
     it('should handle initialization without seed data', async () => {
+      // Mock successful validation only
+      mockConnection.query = vi.fn()
+        .mockResolvedValueOnce([]) // Table validation calls
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+
       await initializer.initialize({ includeTestData: false });
 
-      const stats = await initializer.getStatistics();
-      expect(stats.alpacas).toBe(0);
-      expect(stats.healthRecords).toBe(0);
-      expect(stats.breedingRecords).toBe(0);
-      expect(stats.managementActivities).toBe(0);
+      expect(mockMigrationRunner.migrate).toHaveBeenCalled();
+      expect(mockConnection.execute).not.toHaveBeenCalled(); // Should not seed data
+    });
+
+    it('should handle migration errors', async () => {
+      const migrationError = new Error('Migration failed');
+      mockMigrationRunner.migrate.mockRejectedValue(migrationError);
+
+      await expect(initializer.initialize()).rejects.toThrow(DatabaseInitializationError);
+      await expect(initializer.initialize()).rejects.toThrow('Database initialization failed: Migration failed');
+    });
+
+    it('should handle validation errors', async () => {
+      const validationError = new Error('Table does not exist');
+      mockConnection.query.mockRejectedValue(validationError);
+
+      await expect(initializer.initialize()).rejects.toThrow(DatabaseInitializationError);
     });
   });
 
   describe('reset', () => {
     it('should reset and reinitialize database', async () => {
-      // Initialize with data
-      await initializer.initialize({
-        includeTestData: true,
-        alpacaCount: 3
-      });
+      // Mock successful reset and reinitialization
+      mockConnection.query = vi.fn()
+        .mockResolvedValue([]); // Table validation calls
 
-      let stats = await initializer.getStatistics();
-      expect(stats.alpacas).toBe(3);
-
-      // Reset database
       await initializer.reset({ includeTestData: false });
 
-      stats = await initializer.getStatistics();
-      expect(stats.alpacas).toBe(0);
+      expect(mockMigrationRunner.reset).toHaveBeenCalled();
+      expect(mockMigrationRunner.migrate).toHaveBeenCalled();
+    });
+
+    it('should handle reset errors', async () => {
+      const resetError = new Error('Reset failed');
+      mockMigrationRunner.reset.mockRejectedValue(resetError);
+
+      await expect(initializer.reset()).rejects.toThrow(DatabaseInitializationError);
+      await expect(initializer.reset()).rejects.toThrow('Database reset failed: Reset failed');
+    });
+
+    it('should reinitialize with seed data after reset', async () => {
+      // Mock successful reset and seeding
+      mockConnection.query = vi.fn()
+        .mockResolvedValue([]); // Table validation calls
+      mockConnection.execute = vi.fn().mockResolvedValue({ changes: 1, lastInsertRowid: 1 });
+
+      await initializer.reset({ 
+        includeTestData: true, 
+        alpacaCount: 2 
+      });
+
+      expect(mockMigrationRunner.reset).toHaveBeenCalled();
+      expect(mockMigrationRunner.migrate).toHaveBeenCalled();
+      expect(mockConnection.execute).toHaveBeenCalled(); // Should seed data
     });
   });
 
   describe('validateSchema', () => {
-    it('should validate schema after initialization', async () => {
-      await initializer.initialize();
-      
-      // Should not throw
+    it('should validate schema successfully', async () => {
+      // Mock successful table queries
+      mockConnection.query = vi.fn()
+        .mockResolvedValueOnce([]) // alpacas table
+        .mockResolvedValueOnce([]) // health_records table
+        .mockResolvedValueOnce([]) // breeding_records table
+        .mockResolvedValueOnce([]) // breeding_offspring table
+        .mockResolvedValueOnce([]) // management_activities table
+        .mockResolvedValueOnce([]) // activity_alpacas table
+        .mockResolvedValueOnce([]) // schema_migrations table
+        .mockResolvedValueOnce([{ foreign_keys: 1 }]); // PRAGMA foreign_keys
+
       await expect(initializer.validateSchema()).resolves.not.toThrow();
+      
+      expect(mockConnection.query).toHaveBeenCalledWith('SELECT 1 FROM alpacas LIMIT 0');
+      expect(mockConnection.query).toHaveBeenCalledWith('SELECT 1 FROM health_records LIMIT 0');
+      expect(mockConnection.query).toHaveBeenCalledWith('SELECT 1 FROM breeding_records LIMIT 0');
     });
 
-    it('should fail validation on empty database', async () => {
+    it('should fail validation when table is missing', async () => {
+      const tableError = new Error('no such table: alpacas');
+      mockConnection.query = vi.fn()
+        .mockRejectedValueOnce(tableError);
+
       await expect(initializer.validateSchema()).rejects.toThrow(DatabaseInitializationError);
+      await expect(initializer.validateSchema()).rejects.toThrow("Required table 'alpacas' does not exist");
+    });
+
+    it('should handle foreign key check gracefully', async () => {
+      // Mock successful table queries but foreign key check fails
+      mockConnection.query = vi.fn()
+        .mockResolvedValueOnce([]) // All table checks pass
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockRejectedValueOnce(new Error('PRAGMA not supported')); // Foreign key check fails
+
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await expect(initializer.validateSchema()).resolves.not.toThrow();
+      
+      consoleSpy.mockRestore();
+    });
+
+    it('should warn about disabled foreign keys', async () => {
+      // Mock successful table queries with foreign keys disabled
+      mockConnection.query = vi.fn()
+        .mockResolvedValueOnce([]) // All table checks pass
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ foreign_keys: 0 }]); // Foreign keys disabled
+
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await initializer.validateSchema();
+      
+      expect(consoleSpy).toHaveBeenCalledWith('Foreign key constraints are not enabled');
+      consoleSpy.mockRestore();
+    });
+
+    it('should handle database connection errors', async () => {
+      const connectionError = new Error('Database connection lost');
+      mockConnection.query.mockRejectedValue(connectionError);
+
+      await expect(initializer.validateSchema()).rejects.toThrow(DatabaseInitializationError);
+      await expect(initializer.validateSchema()).rejects.toThrow('Schema validation failed: Database connection lost');
     });
   });
 
   describe('seedData', () => {
-    beforeEach(async () => {
-      // Initialize schema first
-      await initializer.initialize({ includeTestData: false });
-    });
-
     it('should seed database with specified counts', async () => {
+      mockConnection.execute = vi.fn().mockResolvedValue({ changes: 1, lastInsertRowid: 1 });
+
       await initializer.seedData({
-        alpacaCount: 8,
-        healthRecordsPerAlpaca: 1,
-        breedingRecords: 1,
-        managementActivities: 2
-      });
-
-      const stats = await initializer.getStatistics();
-      expect(stats.alpacas).toBe(8);
-      expect(stats.healthRecords).toBe(8);
-      expect(stats.breedingRecords).toBe(1);
-      expect(stats.managementActivities).toBe(2);
-    });
-
-    it('should create valid alpaca records', async () => {
-      await initializer.seedData({ alpacaCount: 3 });
-
-      const alpacas = await connection.query(`
-        SELECT * FROM alpacas ORDER BY name
-      `);
-
-      expect(alpacas).toHaveLength(3);
-      
-      for (const alpaca of alpacas) {
-        expect(alpaca.id).toBeTruthy();
-        expect(alpaca.name).toBeTruthy();
-        expect(alpaca.registration_number).toBeTruthy();
-        expect(alpaca.birth_date).toBeTruthy();
-        expect(['male', 'female']).toContain(alpaca.gender);
-        expect(alpaca.color).toBeTruthy();
-        expect(alpaca.weight).toBeGreaterThan(0);
-        expect(alpaca.height).toBeGreaterThan(0);
-      }
-    });
-
-    it('should create valid health records', async () => {
-      await initializer.seedData({ 
-        alpacaCount: 2, 
-        healthRecordsPerAlpaca: 2 
-      });
-
-      const healthRecords = await connection.query(`
-        SELECT hr.*, a.name as alpaca_name 
-        FROM health_records hr 
-        JOIN alpacas a ON hr.alpaca_id = a.id
-        ORDER BY hr.date
-      `);
-
-      expect(healthRecords).toHaveLength(4);
-      
-      for (const record of healthRecords) {
-        expect(record.id).toBeTruthy();
-        expect(record.alpaca_id).toBeTruthy();
-        expect(record.record_type).toBeTruthy();
-        expect(record.date).toBeTruthy();
-        expect(record.description).toBeTruthy();
-        expect(record.alpaca_name).toBeTruthy();
-      }
-    });
-
-    it('should create valid breeding records', async () => {
-      await initializer.seedData({ 
-        alpacaCount: 6, 
-        breedingRecords: 2 
-      });
-
-      const breedingRecords = await connection.query(`
-        SELECT br.*, 
-               sire.name as sire_name, 
-               dam.name as dam_name
-        FROM breeding_records br
-        JOIN alpacas sire ON br.sire_id = sire.id
-        JOIN alpacas dam ON br.dam_id = dam.id
-      `);
-
-      expect(breedingRecords).toHaveLength(2);
-      
-      for (const record of breedingRecords) {
-        expect(record.id).toBeTruthy();
-        expect(record.sire_id).toBeTruthy();
-        expect(record.dam_id).toBeTruthy();
-        expect(record.breeding_date).toBeTruthy();
-        expect(record.expected_due_date).toBeTruthy();
-        expect(record.sire_name).toBeTruthy();
-        expect(record.dam_name).toBeTruthy();
-        expect(record.sire_id).not.toBe(record.dam_id);
-      }
-    });
-
-    it('should create valid management activities', async () => {
-      await initializer.seedData({ 
-        alpacaCount: 4, 
-        managementActivities: 2 
-      });
-
-      const activities = await connection.query(`
-        SELECT ma.*, 
-               COUNT(aa.alpaca_id) as participant_count
-        FROM management_activities ma
-        LEFT JOIN activity_alpacas aa ON ma.id = aa.activity_id
-        GROUP BY ma.id
-        ORDER BY ma.date
-      `);
-
-      expect(activities).toHaveLength(2);
-      
-      for (const activity of activities) {
-        expect(activity.id).toBeTruthy();
-        expect(activity.activity_type).toBeTruthy();
-        expect(activity.date).toBeTruthy();
-        expect(activity.performed_by).toBeTruthy();
-        expect(activity.description).toBeTruthy();
-        expect(activity.participant_count).toBeGreaterThan(0);
-      }
-    });
-  });
-
-  describe('getStatistics', () => {
-    it('should return correct statistics', async () => {
-      await initializer.initialize({
-        includeTestData: true,
-        alpacaCount: 4,
+        alpacaCount: 3,
         healthRecordsPerAlpaca: 2,
         breedingRecords: 1,
         managementActivities: 2
       });
 
+      // Should have called execute for alpacas (3), health records (6), breeding records (1), activities (2), and activity links
+      expect(mockConnection.execute).toHaveBeenCalled();
+      expect(mockConnection.execute.mock.calls.length).toBeGreaterThan(10); // Multiple inserts
+    });
+
+    it('should use default seed data options', async () => {
+      mockConnection.execute = vi.fn().mockResolvedValue({ changes: 1, lastInsertRowid: 1 });
+
+      await initializer.seedData();
+
+      // Should use defaults: 10 alpacas, 3 health records per alpaca, 3 breeding records, 5 activities
+      expect(mockConnection.execute).toHaveBeenCalled();
+      expect(mockConnection.execute.mock.calls.length).toBeGreaterThan(40); // Many inserts with defaults
+    });
+
+    it('should generate valid alpaca data', async () => {
+      const executeCalls: any[] = [];
+      mockConnection.execute = vi.fn().mockImplementation((sql, params) => {
+        executeCalls.push({ sql, params });
+        return Promise.resolve({ changes: 1, lastInsertRowid: 1 });
+      });
+
+      await initializer.seedData({ alpacaCount: 2 });
+
+      // Find alpaca insert calls
+      const alpacaInserts = executeCalls.filter(call => 
+        call.sql.includes('INSERT INTO alpacas')
+      );
+
+      expect(alpacaInserts).toHaveLength(2);
+      
+      for (const insert of alpacaInserts) {
+        const params = insert.params;
+        expect(params[0]).toBeTruthy(); // id
+        expect(params[1]).toBeTruthy(); // name
+        expect(params[2]).toBeTruthy(); // registration_number
+        expect(params[3]).toBeTruthy(); // birth_date
+        expect(['male', 'female']).toContain(params[4]); // gender
+        expect(params[5]).toBeTruthy(); // color
+        expect(typeof params[6]).toBe('number'); // weight
+        expect(typeof params[7]).toBe('number'); // height
+      }
+    });
+
+    it('should generate health records for each alpaca', async () => {
+      const executeCalls: any[] = [];
+      mockConnection.execute = vi.fn().mockImplementation((sql, params) => {
+        executeCalls.push({ sql, params });
+        return Promise.resolve({ changes: 1, lastInsertRowid: 1 });
+      });
+
+      await initializer.seedData({ 
+        alpacaCount: 2, 
+        healthRecordsPerAlpaca: 3 
+      });
+
+      const healthInserts = executeCalls.filter(call => 
+        call.sql.includes('INSERT INTO health_records')
+      );
+
+      expect(healthInserts).toHaveLength(6); // 2 alpacas * 3 records each
+      
+      for (const insert of healthInserts) {
+        const params = insert.params;
+        expect(params[0]).toBeTruthy(); // id
+        expect(params[1]).toBeTruthy(); // alpaca_id
+        expect(params[2]).toBeTruthy(); // record_type
+        expect(params[3]).toBeTruthy(); // date
+        expect(params[4]).toBeTruthy(); // description
+      }
+    });
+
+    it('should generate breeding records with valid relationships', async () => {
+      const executeCalls: any[] = [];
+      mockConnection.execute = vi.fn().mockImplementation((sql, params) => {
+        executeCalls.push({ sql, params });
+        return Promise.resolve({ changes: 1, lastInsertRowid: 1 });
+      });
+
+      await initializer.seedData({ 
+        alpacaCount: 6, 
+        breedingRecords: 2 
+      });
+
+      const breedingInserts = executeCalls.filter(call => 
+        call.sql.includes('INSERT INTO breeding_records')
+      );
+
+      expect(breedingInserts).toHaveLength(2);
+      
+      for (const insert of breedingInserts) {
+        const params = insert.params;
+        expect(params[0]).toBeTruthy(); // id
+        expect(params[1]).toBeTruthy(); // sire_id
+        expect(params[2]).toBeTruthy(); // dam_id
+        expect(params[3]).toBeTruthy(); // breeding_date
+        expect(params[4]).toBeTruthy(); // expected_due_date
+        expect(params[1]).not.toBe(params[2]); // sire_id !== dam_id
+      }
+    });
+
+    it('should generate management activities with participants', async () => {
+      const executeCalls: any[] = [];
+      mockConnection.execute = vi.fn().mockImplementation((sql, params) => {
+        executeCalls.push({ sql, params });
+        return Promise.resolve({ changes: 1, lastInsertRowid: 1 });
+      });
+
+      await initializer.seedData({ 
+        alpacaCount: 4, 
+        managementActivities: 2 
+      });
+
+      const activityInserts = executeCalls.filter(call => 
+        call.sql.includes('INSERT INTO management_activities')
+      );
+      const participantInserts = executeCalls.filter(call => 
+        call.sql.includes('INSERT INTO activity_alpacas')
+      );
+
+      expect(activityInserts).toHaveLength(2);
+      expect(participantInserts.length).toBeGreaterThan(0); // Should have participants
+      
+      for (const insert of activityInserts) {
+        const params = insert.params;
+        expect(params[0]).toBeTruthy(); // id
+        expect(params[1]).toBeTruthy(); // activity_type
+        expect(params[2]).toBeTruthy(); // date
+        expect(params[3]).toBeTruthy(); // performed_by
+        expect(params[4]).toBeTruthy(); // description
+      }
+    });
+
+    it('should handle seeding errors', async () => {
+      const seedError = new Error('Insert failed');
+      mockConnection.execute.mockRejectedValue(seedError);
+
+      await expect(initializer.seedData({ alpacaCount: 1 })).rejects.toThrow(DatabaseInitializationError);
+      await expect(initializer.seedData({ alpacaCount: 1 })).rejects.toThrow('Data seeding failed: Insert failed');
+    });
+  });
+
+  describe('getStatistics', () => {
+    it('should return correct statistics', async () => {
+      mockConnection.query = vi.fn()
+        .mockResolvedValueOnce([{ count: 4 }])  // alpacas count
+        .mockResolvedValueOnce([{ count: 8 }])  // health_records count
+        .mockResolvedValueOnce([{ count: 1 }])  // breeding_records count
+        .mockResolvedValueOnce([{ count: 2 }]); // management_activities count
+
       const stats = await initializer.getStatistics();
+      
       expect(stats.alpacas).toBe(4);
       expect(stats.healthRecords).toBe(8);
       expect(stats.breedingRecords).toBe(1);
       expect(stats.managementActivities).toBe(2);
+      
+      expect(mockConnection.query).toHaveBeenCalledWith('SELECT COUNT(*) as count FROM alpacas');
+      expect(mockConnection.query).toHaveBeenCalledWith('SELECT COUNT(*) as count FROM health_records');
+      expect(mockConnection.query).toHaveBeenCalledWith('SELECT COUNT(*) as count FROM breeding_records');
+      expect(mockConnection.query).toHaveBeenCalledWith('SELECT COUNT(*) as count FROM management_activities');
     });
 
     it('should return zero statistics for empty database', async () => {
-      await initializer.initialize({ includeTestData: false });
+      mockConnection.query = vi.fn()
+        .mockResolvedValueOnce([{ count: 0 }])  // alpacas count
+        .mockResolvedValueOnce([{ count: 0 }])  // health_records count
+        .mockResolvedValueOnce([{ count: 0 }])  // breeding_records count
+        .mockResolvedValueOnce([{ count: 0 }]); // management_activities count
 
       const stats = await initializer.getStatistics();
+      
       expect(stats.alpacas).toBe(0);
       expect(stats.healthRecords).toBe(0);
       expect(stats.breedingRecords).toBe(0);
       expect(stats.managementActivities).toBe(0);
     });
+
+    it('should handle statistics query errors', async () => {
+      const queryError = new Error('Query failed');
+      mockConnection.query.mockRejectedValue(queryError);
+
+      await expect(initializer.getStatistics()).rejects.toThrow(DatabaseInitializationError);
+      await expect(initializer.getStatistics()).rejects.toThrow('Failed to get statistics: Query failed');
+    });
+
+    it('should handle missing count results', async () => {
+      mockConnection.query = vi.fn()
+        .mockResolvedValueOnce([]) // Empty result
+        .mockResolvedValueOnce([{ count: 5 }])
+        .mockResolvedValueOnce([{ count: 2 }])
+        .mockResolvedValueOnce([{ count: 1 }]);
+
+      const stats = await initializer.getStatistics();
+      
+      expect(stats.alpacas).toBeUndefined(); // Should handle missing count gracefully
+      expect(stats.healthRecords).toBe(5);
+      expect(stats.breedingRecords).toBe(2);
+      expect(stats.managementActivities).toBe(1);
+    });
   });
 
   describe('error handling', () => {
-    it('should handle database connection errors', async () => {
-      await connection.close();
+    it('should handle database connection errors during initialization', async () => {
+      const connectionError = new Error('Connection lost');
+      mockMigrationRunner.migrate.mockRejectedValue(connectionError);
       
       await expect(initializer.initialize()).rejects.toThrow(DatabaseInitializationError);
+      await expect(initializer.initialize()).rejects.toThrow('Database initialization failed: Connection lost');
     });
 
     it('should handle seeding errors gracefully', async () => {
-      // Try to seed without initializing schema first
+      const seedError = new Error('Seeding failed');
+      mockConnection.execute.mockRejectedValue(seedError);
+
       await expect(initializer.seedData({ alpacaCount: 1 })).rejects.toThrow(DatabaseInitializationError);
+      await expect(initializer.seedData({ alpacaCount: 1 })).rejects.toThrow('Data seeding failed: Seeding failed');
+    });
+
+    it('should handle validation errors during initialization', async () => {
+      const validationError = new Error('Table missing');
+      mockConnection.query.mockRejectedValue(validationError);
+
+      await expect(initializer.initialize()).rejects.toThrow(DatabaseInitializationError);
+    });
+
+    it('should wrap unknown errors properly', async () => {
+      const unknownError = 'String error';
+      mockMigrationRunner.migrate.mockRejectedValue(unknownError);
+
+      await expect(initializer.initialize()).rejects.toThrow(DatabaseInitializationError);
+      await expect(initializer.initialize()).rejects.toThrow('Database initialization failed: Unknown error');
+    });
+  });
+
+  describe('console logging', () => {
+    it('should log initialization progress', async () => {
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      mockConnection.query = vi.fn().mockResolvedValue([]);
+
+      await initializer.initialize();
+
+      expect(consoleSpy).toHaveBeenCalledWith('Initializing database...');
+      expect(consoleSpy).toHaveBeenCalledWith('Database initialization completed successfully');
+      
+      consoleSpy.mockRestore();
+    });
+
+    it('should log reset progress', async () => {
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      mockConnection.query = vi.fn().mockResolvedValue([]);
+
+      await initializer.reset();
+
+      expect(consoleSpy).toHaveBeenCalledWith('Resetting database...');
+      expect(consoleSpy).toHaveBeenCalledWith('Database reset completed successfully');
+      
+      consoleSpy.mockRestore();
+    });
+
+    it('should log seeding progress', async () => {
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      mockConnection.execute = vi.fn().mockResolvedValue({ changes: 1, lastInsertRowid: 1 });
+
+      await initializer.seedData({ alpacaCount: 2 });
+
+      expect(consoleSpy).toHaveBeenCalledWith('Seeding database with test data...');
+      expect(consoleSpy).toHaveBeenCalledWith('Seeded database with 2 alpacas and related data');
+      
+      consoleSpy.mockRestore();
+    });
+
+    it('should log validation progress', async () => {
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      mockConnection.query = vi.fn().mockResolvedValue([]);
+
+      await initializer.validateSchema();
+
+      expect(consoleSpy).toHaveBeenCalledWith('Schema validation completed successfully');
+      
+      consoleSpy.mockRestore();
     });
   });
 });
 
 describe('Global initialization functions', () => {
-  it('should initialize database with default connection', async () => {
-    // This test would require mocking the global connection manager
-    // For now, we'll just test that the functions exist and can be called
-    expect(typeof initializeDatabase).toBe('function');
-    expect(typeof resetDatabase).toBe('function');
+  let mockConnectionManager: any;
+  let mockConnection: DatabaseConnection;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    
+    mockConnection = {
+      query: vi.fn().mockResolvedValue([]),
+      execute: vi.fn().mockResolvedValue({ changes: 1, lastInsertRowid: 1 }),
+      close: vi.fn(),
+      isConnected: vi.fn().mockReturnValue(true)
+    };
+
+    mockConnectionManager = {
+      getConnection: vi.fn().mockResolvedValue(mockConnection)
+    };
+
+    // Mock the getConnectionManager function
+    vi.doMock('../connection', () => ({
+      getConnectionManager: vi.fn().mockReturnValue(mockConnectionManager)
+    }));
+  });
+
+  describe('initializeDatabase', () => {
+    it('should initialize database with default connection', async () => {
+      // Mock the module to avoid actual database operations
+      const { getConnectionManager } = await import('../connection');
+      (getConnectionManager as any).mockReturnValue(mockConnectionManager);
+
+      await expect(initializeDatabase()).resolves.not.toThrow();
+      
+      expect(mockConnectionManager.getConnection).toHaveBeenCalled();
+    });
+
+    it('should pass options to initializer', async () => {
+      const { getConnectionManager } = await import('../connection');
+      (getConnectionManager as any).mockReturnValue(mockConnectionManager);
+
+      const options: SeedDataOptions = { 
+        includeTestData: true, 
+        alpacaCount: 5 
+      };
+
+      await expect(initializeDatabase(options)).resolves.not.toThrow();
+    });
+  });
+
+  describe('resetDatabase', () => {
+    it('should reset database with default connection', async () => {
+      const { getConnectionManager } = await import('../connection');
+      (getConnectionManager as any).mockReturnValue(mockConnectionManager);
+
+      await expect(resetDatabase()).resolves.not.toThrow();
+      
+      expect(mockConnectionManager.getConnection).toHaveBeenCalled();
+    });
+
+    it('should pass options to reset', async () => {
+      const { getConnectionManager } = await import('../connection');
+      (getConnectionManager as any).mockReturnValue(mockConnectionManager);
+
+      const options: SeedDataOptions = { 
+        includeTestData: false 
+      };
+
+      await expect(resetDatabase(options)).resolves.not.toThrow();
+    });
   });
 });

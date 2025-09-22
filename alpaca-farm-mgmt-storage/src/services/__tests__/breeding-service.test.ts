@@ -1,206 +1,141 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { BreedingServiceImpl, BreedingServiceError } from '../breeding-service';
-import { BreedingRepository } from '../../repositories';
-import { AlpacaRepository, LineageTree } from '../../repositories';
-import { BreedingRecord, CreateBreedingRecordInput, UpdateBreedingRecordInput, Alpaca } from '../../models';
-
-// Mock repositories
-const mockBreedingRepository: BreedingRepository = {
-  create: vi.fn(),
-  findById: vi.fn(),
-  findAll: vi.fn(),
-  update: vi.fn(),
-  delete: vi.fn(),
-  findByParent: vi.fn(),
-  findByDateRange: vi.fn(),
-  checkInbreeding: vi.fn()
-};
-
-const mockAlpacaRepository: AlpacaRepository = {
-  create: vi.fn(),
-  findById: vi.fn(),
-  findAll: vi.fn(),
-  update: vi.fn(),
-  delete: vi.fn(),
-  findByRegistrationNumber: vi.fn(),
-  findByParent: vi.fn(),
-  findByGender: vi.fn(),
-  getLineage: vi.fn()
-};
+import { BreedingService, BreedingStatistics, BreedingCompatibility } from '../breeding-service';
+import { PostgreSQLBreedingRepository, QueryOptions, PaginatedResult } from '../../repositories/pg-breeding-repository';
+import { BreedingRecord, CreateBreedingRecordInput, UpdateBreedingRecordInput } from '../../models/breeding-record';
+import { BreedingRecordFactory } from '../../__tests__/data-factories';
+import { MockBreedingRepositoryFactory } from '../../__tests__/mock-factories';
 
 describe('BreedingService', () => {
-  let service: BreedingServiceImpl;
+  let service: BreedingService;
+  let mockRepository: ReturnType<typeof MockBreedingRepositoryFactory.create>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    service = new BreedingServiceImpl(mockBreedingRepository, mockAlpacaRepository);
+    mockRepository = MockBreedingRepositoryFactory.create();
+    service = new BreedingService(mockRepository as any);
   });
 
-  const mockSire: Alpaca = {
-    id: '550e8400-e29b-41d4-a716-446655440000',
-    name: 'Test Sire',
-    birthDate: new Date('2018-01-01'),
-    gender: 'male',
-    color: 'brown',
-    createdAt: new Date(),
-    updatedAt: new Date()
-  };
-
-  const mockDam: Alpaca = {
-    id: '550e8400-e29b-41d4-a716-446655440001',
-    name: 'Test Dam',
-    birthDate: new Date('2019-01-01'),
-    gender: 'female',
-    color: 'white',
-    createdAt: new Date(),
-    updatedAt: new Date()
-  };
-
-  const mockOffspring: Alpaca = {
-    id: '550e8400-e29b-41d4-a716-446655440002',
-    name: 'Test Offspring',
-    birthDate: new Date('2023-01-01'),
-    gender: 'female',
-    color: 'gray',
-    createdAt: new Date(),
-    updatedAt: new Date()
-  };
-
-  const mockBreedingRecord: BreedingRecord = {
-    id: '550e8400-e29b-41d4-a716-446655440003',
-    sireId: mockSire.id,
-    damId: mockDam.id,
+  const mockBreedingRecord = BreedingRecordFactory.create({
+    id: 'breeding-1',
+    sireId: 'sire-1',
+    damId: 'dam-1',
     breedingDate: new Date('2022-02-01'),
     expectedDueDate: new Date('2023-01-01'),
     actualBirthDate: new Date('2023-01-05'),
-    offspringIds: [mockOffspring.id],
-    notes: 'Successful breeding',
-    createdAt: new Date(),
-    updatedAt: new Date()
+    offspringIds: ['offspring-1'],
+    notes: 'Successful breeding'
+  });
+
+  const mockPaginatedResult: PaginatedResult<BreedingRecord> = {
+    data: [mockBreedingRecord],
+    total: 1,
+    page: 1,
+    limit: 10,
+    totalPages: 1
   };
 
   describe('createBreedingRecord', () => {
     it('should successfully create a valid breeding record', async () => {
       const input: CreateBreedingRecordInput = {
-        sireId: mockSire.id,
-        damId: mockDam.id,
+        sireId: 'sire-1',
+        damId: 'dam-1',
         breedingDate: new Date('2022-02-01'),
         expectedDueDate: new Date('2023-01-01'),
         offspringIds: []
       };
 
-      // Mock findById calls for both creation validation and compatibility check
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValueOnce(mockSire)  // First call for sire in createBreedingRecord
-        .mockResolvedValueOnce(mockDam)   // Second call for dam in createBreedingRecord
-        .mockResolvedValueOnce(mockSire)  // Third call for sire in checkBreedingCompatibility
-        .mockResolvedValueOnce(mockDam);  // Fourth call for dam in checkBreedingCompatibility
-      
-      vi.mocked(mockBreedingRepository.checkInbreeding).mockResolvedValue(false);
-      vi.mocked(mockAlpacaRepository.getLineage).mockResolvedValue(null);
-      vi.mocked(mockBreedingRepository.findByParent).mockResolvedValue([]);
-      vi.mocked(mockBreedingRepository.create).mockResolvedValue(mockBreedingRecord);
+      mockRepository.create.mockResolvedValue(mockBreedingRecord);
 
       const result = await service.createBreedingRecord(input);
 
       expect(result).toEqual(mockBreedingRecord);
-      expect(mockBreedingRepository.create).toHaveBeenCalledWith(input);
+      expect(mockRepository.create).toHaveBeenCalledWith(input);
     });
 
-    it('should fail creation with invalid input', async () => {
+    it('should throw error for empty sire ID', async () => {
       const input: CreateBreedingRecordInput = {
-        sireId: 'invalid-id', // Invalid UUID
-        damId: mockDam.id,
+        sireId: '',
+        damId: 'dam-1',
         breedingDate: new Date('2022-02-01'),
         offspringIds: []
       };
 
-      await expect(service.createBreedingRecord(input))
-        .rejects.toThrow(BreedingServiceError);
+      await expect(service.createBreedingRecord(input)).rejects.toThrow('Sire ID is required');
+      expect(mockRepository.create).not.toHaveBeenCalled();
     });
 
-    it('should fail creation when sire does not exist', async () => {
+    it('should throw error for whitespace-only sire ID', async () => {
       const input: CreateBreedingRecordInput = {
-        sireId: mockSire.id,
-        damId: mockDam.id,
+        sireId: '   ',
+        damId: 'dam-1',
         breedingDate: new Date('2022-02-01'),
         offspringIds: []
       };
 
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(mockDam);
-
-      await expect(service.createBreedingRecord(input))
-        .rejects.toThrow('Sire not found');
+      await expect(service.createBreedingRecord(input)).rejects.toThrow('Sire ID is required');
+      expect(mockRepository.create).not.toHaveBeenCalled();
     });
 
-    it('should fail creation when dam does not exist', async () => {
+    it('should throw error for empty dam ID', async () => {
       const input: CreateBreedingRecordInput = {
-        sireId: mockSire.id,
-        damId: mockDam.id,
+        sireId: 'sire-1',
+        damId: '',
         breedingDate: new Date('2022-02-01'),
         offspringIds: []
       };
 
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValueOnce(mockSire)
-        .mockResolvedValueOnce(null);
-
-      await expect(service.createBreedingRecord(input))
-        .rejects.toThrow('Dam not found');
+      await expect(service.createBreedingRecord(input)).rejects.toThrow('Dam ID is required');
+      expect(mockRepository.create).not.toHaveBeenCalled();
     });
 
-    it('should fail creation when sire is not male', async () => {
-      const femaleSire = { ...mockSire, gender: 'female' as const };
+    it('should throw error for whitespace-only dam ID', async () => {
       const input: CreateBreedingRecordInput = {
-        sireId: mockSire.id,
-        damId: mockDam.id,
+        sireId: 'sire-1',
+        damId: '   ',
         breedingDate: new Date('2022-02-01'),
         offspringIds: []
       };
 
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValueOnce(femaleSire)
-        .mockResolvedValueOnce(mockDam);
-
-      await expect(service.createBreedingRecord(input))
-        .rejects.toThrow('Sire must be male');
+      await expect(service.createBreedingRecord(input)).rejects.toThrow('Dam ID is required');
+      expect(mockRepository.create).not.toHaveBeenCalled();
     });
 
-    it('should fail creation when dam is not female', async () => {
-      const maleDam = { ...mockDam, gender: 'male' as const };
+    it('should throw error for missing breeding date', async () => {
       const input: CreateBreedingRecordInput = {
-        sireId: mockSire.id,
-        damId: mockDam.id,
+        sireId: 'sire-1',
+        damId: 'dam-1',
+        breedingDate: undefined as any,
+        offspringIds: []
+      };
+
+      await expect(service.createBreedingRecord(input)).rejects.toThrow('Breeding date is required');
+      expect(mockRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('should throw error when sire and dam are the same', async () => {
+      const input: CreateBreedingRecordInput = {
+        sireId: 'same-alpaca',
+        damId: 'same-alpaca',
         breedingDate: new Date('2022-02-01'),
         offspringIds: []
       };
 
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValueOnce(mockSire)
-        .mockResolvedValueOnce(maleDam);
-
-      await expect(service.createBreedingRecord(input))
-        .rejects.toThrow('Dam must be female');
+      await expect(service.createBreedingRecord(input)).rejects.toThrow('Sire and dam cannot be the same alpaca');
+      expect(mockRepository.create).not.toHaveBeenCalled();
     });
 
-    it('should fail creation when inbreeding is detected', async () => {
+    it('should handle repository errors', async () => {
       const input: CreateBreedingRecordInput = {
-        sireId: mockSire.id,
-        damId: mockDam.id,
+        sireId: 'sire-1',
+        damId: 'dam-1',
         breedingDate: new Date('2022-02-01'),
         offspringIds: []
       };
 
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValueOnce(mockSire)
-        .mockResolvedValueOnce(mockDam);
-      vi.mocked(mockBreedingRepository.checkInbreeding).mockResolvedValue(true);
-      vi.mocked(mockAlpacaRepository.getLineage).mockResolvedValue(null);
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.create.mockRejectedValue(repositoryError);
 
-      await expect(service.createBreedingRecord(input))
-        .rejects.toThrow('Breeding not compatible');
+      await expect(service.createBreedingRecord(input)).rejects.toThrow('Database connection failed');
     });
   });
 
@@ -212,95 +147,366 @@ describe('BreedingService', () => {
       };
 
       const updatedRecord = { ...mockBreedingRecord, ...updates };
+      mockRepository.update.mockResolvedValue(updatedRecord);
 
-      vi.mocked(mockBreedingRepository.findById).mockResolvedValue(mockBreedingRecord);
-      vi.mocked(mockBreedingRepository.update).mockResolvedValue(updatedRecord);
-
-      const result = await service.updateBreedingRecord(mockBreedingRecord.id, updates);
+      const result = await service.updateBreedingRecord('breeding-1', updates);
 
       expect(result).toEqual(updatedRecord);
-      expect(mockBreedingRepository.update).toHaveBeenCalledWith(mockBreedingRecord.id, updates);
+      expect(mockRepository.update).toHaveBeenCalledWith('breeding-1', updates);
     });
 
-    it('should throw error when updating non-existent breeding record', async () => {
-      vi.mocked(mockBreedingRepository.findById).mockResolvedValue(null);
+    it('should throw error for empty ID', async () => {
+      const updates: UpdateBreedingRecordInput = { notes: 'Updated' };
 
-      await expect(service.updateBreedingRecord('invalid-id', { notes: 'Updated' }))
-        .rejects.toThrow('Breeding record not found');
+      await expect(service.updateBreedingRecord('', updates)).rejects.toThrow('Breeding record ID is required');
+      expect(mockRepository.update).not.toHaveBeenCalled();
     });
 
-    it('should validate new sire when updating sireId', async () => {
-      const updates: UpdateBreedingRecordInput = {
-        sireId: '550e8400-e29b-41d4-a716-446655440004'
+    it('should throw error for whitespace-only ID', async () => {
+      const updates: UpdateBreedingRecordInput = { notes: 'Updated' };
+
+      await expect(service.updateBreedingRecord('   ', updates)).rejects.toThrow('Breeding record ID is required');
+      expect(mockRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for empty sire ID in updates', async () => {
+      const updates: UpdateBreedingRecordInput = { sireId: '' };
+
+      await expect(service.updateBreedingRecord('breeding-1', updates))
+        .rejects.toThrow('Sire ID cannot be empty');
+      expect(mockRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for whitespace-only sire ID in updates', async () => {
+      const updates: UpdateBreedingRecordInput = { sireId: '   ' };
+
+      await expect(service.updateBreedingRecord('breeding-1', updates))
+        .rejects.toThrow('Sire ID cannot be empty');
+      expect(mockRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for empty dam ID in updates', async () => {
+      const updates: UpdateBreedingRecordInput = { damId: '' };
+
+      await expect(service.updateBreedingRecord('breeding-1', updates))
+        .rejects.toThrow('Dam ID cannot be empty');
+      expect(mockRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for whitespace-only dam ID in updates', async () => {
+      const updates: UpdateBreedingRecordInput = { damId: '   ' };
+
+      await expect(service.updateBreedingRecord('breeding-1', updates))
+        .rejects.toThrow('Dam ID cannot be empty');
+      expect(mockRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('should throw error when sire and dam are the same in updates', async () => {
+      const updates: UpdateBreedingRecordInput = { 
+        sireId: 'same-alpaca',
+        damId: 'same-alpaca'
       };
 
-      vi.mocked(mockBreedingRepository.findById).mockResolvedValue(mockBreedingRecord);
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(null);
+      await expect(service.updateBreedingRecord('breeding-1', updates))
+        .rejects.toThrow('Sire and dam cannot be the same alpaca');
+      expect(mockRepository.update).not.toHaveBeenCalled();
+    });
 
-      await expect(service.updateBreedingRecord(mockBreedingRecord.id, updates))
-        .rejects.toThrow('Sire not found');
+    it('should allow undefined values in updates', async () => {
+      const updates: UpdateBreedingRecordInput = {
+        sireId: undefined,
+        damId: undefined
+      };
+
+      const updatedRecord = { ...mockBreedingRecord };
+      mockRepository.update.mockResolvedValue(updatedRecord);
+
+      const result = await service.updateBreedingRecord('breeding-1', updates);
+
+      expect(result).toEqual(updatedRecord);
+      expect(mockRepository.update).toHaveBeenCalledWith('breeding-1', updates);
+    });
+
+    it('should handle repository errors', async () => {
+      const updates: UpdateBreedingRecordInput = { notes: 'Updated' };
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.update.mockRejectedValue(repositoryError);
+
+      await expect(service.updateBreedingRecord('breeding-1', updates))
+        .rejects.toThrow('Database connection failed');
+    });
+
+    it('should return null when breeding record not found', async () => {
+      const updates: UpdateBreedingRecordInput = { notes: 'Updated' };
+      mockRepository.update.mockResolvedValue(null);
+
+      const result = await service.updateBreedingRecord('nonexistent-id', updates);
+
+      expect(result).toBeNull();
+      expect(mockRepository.update).toHaveBeenCalledWith('nonexistent-id', updates);
     });
   });
 
   describe('getBreedingRecord', () => {
     it('should return breeding record by ID', async () => {
-      vi.mocked(mockBreedingRepository.findById).mockResolvedValue(mockBreedingRecord);
+      mockRepository.findById.mockResolvedValue(mockBreedingRecord);
 
-      const result = await service.getBreedingRecord(mockBreedingRecord.id);
+      const result = await service.getBreedingRecord('breeding-1');
 
       expect(result).toEqual(mockBreedingRecord);
-      expect(mockBreedingRepository.findById).toHaveBeenCalledWith(mockBreedingRecord.id);
+      expect(mockRepository.findById).toHaveBeenCalledWith('breeding-1');
     });
 
     it('should return null for non-existent breeding record', async () => {
-      vi.mocked(mockBreedingRepository.findById).mockResolvedValue(null);
+      mockRepository.findById.mockResolvedValue(null);
 
       const result = await service.getBreedingRecord('invalid-id');
 
       expect(result).toBeNull();
+      expect(mockRepository.findById).toHaveBeenCalledWith('invalid-id');
+    });
+
+    it('should throw error for empty ID', async () => {
+      await expect(service.getBreedingRecord('')).rejects.toThrow('Breeding record ID is required');
+      expect(mockRepository.findById).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for whitespace-only ID', async () => {
+      await expect(service.getBreedingRecord('   ')).rejects.toThrow('Breeding record ID is required');
+      expect(mockRepository.findById).not.toHaveBeenCalled();
+    });
+
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.findById.mockRejectedValue(repositoryError);
+
+      await expect(service.getBreedingRecord('breeding-1')).rejects.toThrow('Database connection failed');
     });
   });
 
   describe('getAllBreedingRecords', () => {
-    it('should return all breeding records', async () => {
-      const breedingRecords = [mockBreedingRecord];
-      vi.mocked(mockBreedingRepository.findAll).mockResolvedValue(breedingRecords);
+    it('should return all breeding records with default options', async () => {
+      mockRepository.findAll.mockResolvedValue(mockPaginatedResult);
 
       const result = await service.getAllBreedingRecords();
 
-      expect(result).toEqual(breedingRecords);
-      expect(mockBreedingRepository.findAll).toHaveBeenCalled();
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.findAll).toHaveBeenCalledWith({});
     });
 
     it('should pass query options to repository', async () => {
-      const options = { limit: 10, offset: 0 };
-      vi.mocked(mockBreedingRepository.findAll).mockResolvedValue([]);
+      const options: QueryOptions = { limit: 10, offset: 0 };
+      mockRepository.findAll.mockResolvedValue(mockPaginatedResult);
 
-      await service.getAllBreedingRecords(options);
+      const result = await service.getAllBreedingRecords(options);
 
-      expect(mockBreedingRepository.findAll).toHaveBeenCalledWith(options);
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.findAll).toHaveBeenCalledWith(options);
+    });
+
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.findAll.mockRejectedValue(repositoryError);
+
+      await expect(service.getAllBreedingRecords()).rejects.toThrow('Database connection failed');
+    });
+  });
+
+  describe('deleteBreedingRecord', () => {
+    it('should successfully delete a breeding record', async () => {
+      mockRepository.delete.mockResolvedValue(true);
+
+      const result = await service.deleteBreedingRecord('breeding-1');
+
+      expect(result).toBe(true);
+      expect(mockRepository.delete).toHaveBeenCalledWith('breeding-1');
+    });
+
+    it('should return false when breeding record not found', async () => {
+      mockRepository.delete.mockResolvedValue(false);
+
+      const result = await service.deleteBreedingRecord('nonexistent-id');
+
+      expect(result).toBe(false);
+      expect(mockRepository.delete).toHaveBeenCalledWith('nonexistent-id');
+    });
+
+    it('should throw error for empty ID', async () => {
+      await expect(service.deleteBreedingRecord('')).rejects.toThrow('Breeding record ID is required');
+      expect(mockRepository.delete).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for whitespace-only ID', async () => {
+      await expect(service.deleteBreedingRecord('   ')).rejects.toThrow('Breeding record ID is required');
+      expect(mockRepository.delete).not.toHaveBeenCalled();
+    });
+
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.delete.mockRejectedValue(repositoryError);
+
+      await expect(service.deleteBreedingRecord('breeding-1')).rejects.toThrow('Database connection failed');
+    });
+  });
+
+  describe('getBreedingRecordsBySire', () => {
+    it('should return breeding records for a sire', async () => {
+      mockRepository.findBySire.mockResolvedValue(mockPaginatedResult);
+
+      const result = await service.getBreedingRecordsBySire('sire-1');
+
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.findBySire).toHaveBeenCalledWith('sire-1', {});
+    });
+
+    it('should throw error for empty sire ID', async () => {
+      await expect(service.getBreedingRecordsBySire('')).rejects.toThrow('Sire ID is required');
+      expect(mockRepository.findBySire).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for whitespace-only sire ID', async () => {
+      await expect(service.getBreedingRecordsBySire('   ')).rejects.toThrow('Sire ID is required');
+      expect(mockRepository.findBySire).not.toHaveBeenCalled();
+    });
+
+    it('should pass query options to repository', async () => {
+      const options: QueryOptions = { limit: 5, offset: 10 };
+      mockRepository.findBySire.mockResolvedValue(mockPaginatedResult);
+
+      const result = await service.getBreedingRecordsBySire('sire-1', options);
+
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.findBySire).toHaveBeenCalledWith('sire-1', options);
+    });
+
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.findBySire.mockRejectedValue(repositoryError);
+
+      await expect(service.getBreedingRecordsBySire('sire-1')).rejects.toThrow('Database connection failed');
+    });
+  });
+
+  describe('getBreedingRecordsByDam', () => {
+    it('should return breeding records for a dam', async () => {
+      mockRepository.findByDam.mockResolvedValue(mockPaginatedResult);
+
+      const result = await service.getBreedingRecordsByDam('dam-1');
+
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.findByDam).toHaveBeenCalledWith('dam-1', {});
+    });
+
+    it('should throw error for empty dam ID', async () => {
+      await expect(service.getBreedingRecordsByDam('')).rejects.toThrow('Dam ID is required');
+      expect(mockRepository.findByDam).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for whitespace-only dam ID', async () => {
+      await expect(service.getBreedingRecordsByDam('   ')).rejects.toThrow('Dam ID is required');
+      expect(mockRepository.findByDam).not.toHaveBeenCalled();
+    });
+
+    it('should pass query options to repository', async () => {
+      const options: QueryOptions = { limit: 5, offset: 10 };
+      mockRepository.findByDam.mockResolvedValue(mockPaginatedResult);
+
+      const result = await service.getBreedingRecordsByDam('dam-1', options);
+
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.findByDam).toHaveBeenCalledWith('dam-1', options);
+    });
+
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.findByDam.mockRejectedValue(repositoryError);
+
+      await expect(service.getBreedingRecordsByDam('dam-1')).rejects.toThrow('Database connection failed');
     });
   });
 
   describe('getBreedingRecordsByParent', () => {
-    it('should return breeding records for a parent', async () => {
-      const breedingRecords = [mockBreedingRecord];
+    it('should return breeding records for a parent (combining sire and dam records)', async () => {
+      const sireRecords = BreedingRecordFactory.createMultiple(2, { sireId: 'parent-1' });
+      const damRecords = BreedingRecordFactory.createMultiple(1, { damId: 'parent-1' });
+      
+      const sireResult: PaginatedResult<BreedingRecord> = {
+        data: sireRecords,
+        total: 2,
+        page: 1,
+        limit: 20,
+        totalPages: 1
+      };
+      
+      const damResult: PaginatedResult<BreedingRecord> = {
+        data: damRecords,
+        total: 1,
+        page: 1,
+        limit: 20,
+        totalPages: 1
+      };
 
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(mockSire);
-      vi.mocked(mockBreedingRepository.findByParent).mockResolvedValue(breedingRecords);
+      mockRepository.findBySire.mockResolvedValue(sireResult);
+      mockRepository.findByDam.mockResolvedValue(damResult);
 
-      const result = await service.getBreedingRecordsByParent(mockSire.id);
+      const result = await service.getBreedingRecordsByParent('parent-1');
 
-      expect(result).toEqual(breedingRecords);
-      expect(mockAlpacaRepository.findById).toHaveBeenCalledWith(mockSire.id);
-      expect(mockBreedingRepository.findByParent).toHaveBeenCalledWith(mockSire.id);
+      expect(result.data).toHaveLength(3); // 2 sire + 1 dam records
+      expect(result.total).toBe(3);
+      expect(mockRepository.findBySire).toHaveBeenCalledWith('parent-1', {});
+      expect(mockRepository.findByDam).toHaveBeenCalledWith('parent-1', {});
     });
 
-    it('should throw error for non-existent parent', async () => {
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(null);
+    it('should throw error for empty parent ID', async () => {
+      await expect(service.getBreedingRecordsByParent('')).rejects.toThrow('Parent ID is required');
+      expect(mockRepository.findBySire).not.toHaveBeenCalled();
+      expect(mockRepository.findByDam).not.toHaveBeenCalled();
+    });
 
-      await expect(service.getBreedingRecordsByParent('invalid-id'))
-        .rejects.toThrow('Parent alpaca not found');
+    it('should throw error for whitespace-only parent ID', async () => {
+      await expect(service.getBreedingRecordsByParent('   ')).rejects.toThrow('Parent ID is required');
+      expect(mockRepository.findBySire).not.toHaveBeenCalled();
+      expect(mockRepository.findByDam).not.toHaveBeenCalled();
+    });
+
+    it('should deduplicate records and sort by breeding date', async () => {
+      const sharedRecord = BreedingRecordFactory.create({ 
+        id: 'shared-1', 
+        sireId: 'parent-1', 
+        damId: 'parent-1',
+        breedingDate: new Date('2023-01-01')
+      });
+      
+      const sireResult: PaginatedResult<BreedingRecord> = {
+        data: [sharedRecord],
+        total: 1,
+        page: 1,
+        limit: 20,
+        totalPages: 1
+      };
+      
+      const damResult: PaginatedResult<BreedingRecord> = {
+        data: [sharedRecord], // Same record appears in both
+        total: 1,
+        page: 1,
+        limit: 20,
+        totalPages: 1
+      };
+
+      mockRepository.findBySire.mockResolvedValue(sireResult);
+      mockRepository.findByDam.mockResolvedValue(damResult);
+
+      const result = await service.getBreedingRecordsByParent('parent-1');
+
+      expect(result.data).toHaveLength(1); // Deduplicated
+      expect(result.data[0].id).toBe('shared-1');
+    });
+
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.findBySire.mockRejectedValue(repositoryError);
+
+      await expect(service.getBreedingRecordsByParent('parent-1')).rejects.toThrow('Database connection failed');
     });
   });
 
@@ -308,377 +514,167 @@ describe('BreedingService', () => {
     it('should return breeding records within date range', async () => {
       const startDate = new Date('2022-01-01');
       const endDate = new Date('2022-12-31');
-      const breedingRecords = [mockBreedingRecord];
-
-      vi.mocked(mockBreedingRepository.findByDateRange).mockResolvedValue(breedingRecords);
+      mockRepository.findByDateRange.mockResolvedValue(mockPaginatedResult);
 
       const result = await service.getBreedingRecordsByDateRange(startDate, endDate);
 
-      expect(result).toEqual(breedingRecords);
-      expect(mockBreedingRepository.findByDateRange).toHaveBeenCalledWith(startDate, endDate);
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.findByDateRange).toHaveBeenCalledWith(startDate, endDate, {});
     });
 
-    it('should throw error when start date is after end date', async () => {
-      const startDate = new Date('2022-12-31');
-      const endDate = new Date('2022-01-01');
+    it('should pass query options to repository', async () => {
+      const startDate = new Date('2022-01-01');
+      const endDate = new Date('2022-12-31');
+      const options: QueryOptions = { limit: 5, offset: 10 };
+      mockRepository.findByDateRange.mockResolvedValue(mockPaginatedResult);
 
-      await expect(service.getBreedingRecordsByDateRange(startDate, endDate))
-        .rejects.toThrow('Start date must be before end date');
-    });
-  });
+      const result = await service.getBreedingRecordsByDateRange(startDate, endDate, options);
 
-  describe('checkBreedingCompatibility', () => {
-    it('should return compatible for valid breeding pair', async () => {
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValueOnce(mockSire)
-        .mockResolvedValueOnce(mockDam);
-      vi.mocked(mockBreedingRepository.checkInbreeding).mockResolvedValue(false);
-      vi.mocked(mockAlpacaRepository.getLineage).mockResolvedValue(null);
-      vi.mocked(mockBreedingRepository.findByParent).mockResolvedValue([]);
-
-      const result = await service.checkBreedingCompatibility(mockSire.id, mockDam.id);
-
-      expect(result.compatible).toBe(true);
-      expect(result.reasons).toHaveLength(0);
-      expect(result.riskLevel).toBe('low');
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.findByDateRange).toHaveBeenCalledWith(startDate, endDate, options);
     });
 
-    it('should detect gender issues', async () => {
-      const femaleSire = { ...mockSire, gender: 'female' as const };
-      const maleDam = { ...mockDam, gender: 'male' as const };
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.findByDateRange.mockRejectedValue(repositoryError);
 
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValueOnce(femaleSire)
-        .mockResolvedValueOnce(maleDam);
-
-      const result = await service.checkBreedingCompatibility(mockSire.id, mockDam.id);
-
-      expect(result.compatible).toBe(false);
-      expect(result.reasons).toContain('Sire must be male');
-      expect(result.reasons).toContain('Dam must be female');
-    });
-
-    it('should detect inbreeding', async () => {
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValueOnce(mockSire)
-        .mockResolvedValueOnce(mockDam);
-      vi.mocked(mockBreedingRepository.checkInbreeding).mockResolvedValue(true);
-
-      const result = await service.checkBreedingCompatibility(mockSire.id, mockDam.id);
-
-      expect(result.compatible).toBe(false);
-      expect(result.reasons).toContain('Close genetic relationship detected (inbreeding risk)');
-      expect(result.riskLevel).toBe('high');
-    });
-
-    it('should detect age issues', async () => {
-      const youngSire = { ...mockSire, birthDate: new Date() }; // Just born
-      const youngDam = { ...mockDam, birthDate: new Date() }; // Just born
-
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValueOnce(youngSire)
-        .mockResolvedValueOnce(youngDam);
-      vi.mocked(mockBreedingRepository.checkInbreeding).mockResolvedValue(false);
-      vi.mocked(mockAlpacaRepository.getLineage).mockResolvedValue(null);
-
-      const result = await service.checkBreedingCompatibility(mockSire.id, mockDam.id);
-
-      expect(result.compatible).toBe(false);
-      expect(result.reasons).toContain('Sire is too young (under 2 years)');
-      expect(result.reasons).toContain('Dam is too young (under 18 months)');
+      await expect(service.getBreedingRecordsByDateRange(new Date(), new Date())).rejects.toThrow('Database connection failed');
     });
   });
 
-  describe('validateGeneticCompatibility', () => {
-    it('should validate compatible breeding pair', async () => {
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValueOnce(mockSire)
-        .mockResolvedValueOnce(mockDam);
-      vi.mocked(mockBreedingRepository.checkInbreeding).mockResolvedValue(false);
-      vi.mocked(mockAlpacaRepository.getLineage).mockResolvedValue(null);
-      vi.mocked(mockBreedingRepository.findByParent).mockResolvedValue([]);
+  describe('getExpectedBirths', () => {
+    it('should return expected births with default days ahead', async () => {
+      const expectedRecords = [mockBreedingRecord];
+      mockRepository.getExpectedBirths.mockResolvedValue(expectedRecords);
 
-      const result = await service.validateGeneticCompatibility(mockSire.id, mockDam.id);
+      const result = await service.getExpectedBirths();
 
-      expect(result.valid).toBe(true);
-      expect(result.errors).toHaveLength(0);
+      expect(result).toEqual(expectedRecords);
+      expect(mockRepository.getExpectedBirths).toHaveBeenCalledWith(30);
     });
 
-    it('should detect incompatible breeding pair', async () => {
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValueOnce(mockSire)
-        .mockResolvedValueOnce(mockDam);
-      vi.mocked(mockBreedingRepository.checkInbreeding).mockResolvedValue(true);
+    it('should return expected births with custom days ahead', async () => {
+      const expectedRecords = [mockBreedingRecord];
+      mockRepository.getExpectedBirths.mockResolvedValue(expectedRecords);
 
-      const result = await service.validateGeneticCompatibility(mockSire.id, mockDam.id);
+      const result = await service.getExpectedBirths(60);
 
-      expect(result.valid).toBe(false);
-      expect(result.errors.length).toBeGreaterThan(0);
-    });
-  });
-
-  describe('addOffspring', () => {
-    it('should successfully add offspring to breeding record', async () => {
-      const breedingWithoutOffspring = { ...mockBreedingRecord, offspringIds: [] };
-      const updatedBreeding = { ...mockBreedingRecord, offspringIds: [mockOffspring.id] };
-
-      vi.mocked(mockBreedingRepository.findById).mockResolvedValue(breedingWithoutOffspring);
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(mockOffspring);
-      vi.mocked(mockBreedingRepository.update).mockResolvedValue(updatedBreeding);
-
-      const result = await service.addOffspring(mockBreedingRecord.id, mockOffspring.id);
-
-      expect(result).toEqual(updatedBreeding);
-      expect(mockBreedingRepository.update).toHaveBeenCalledWith(
-        mockBreedingRecord.id,
-        { offspringIds: [mockOffspring.id] }
-      );
+      expect(result).toEqual(expectedRecords);
+      expect(mockRepository.getExpectedBirths).toHaveBeenCalledWith(60);
     });
 
-    it('should throw error when breeding record does not exist', async () => {
-      vi.mocked(mockBreedingRepository.findById).mockResolvedValue(null);
-
-      await expect(service.addOffspring('invalid-id', mockOffspring.id))
-        .rejects.toThrow('Breeding record not found');
+    it('should throw error for negative days ahead', async () => {
+      await expect(service.getExpectedBirths(-5)).rejects.toThrow('Days ahead must be a positive number');
+      expect(mockRepository.getExpectedBirths).not.toHaveBeenCalled();
     });
 
-    it('should throw error when offspring does not exist', async () => {
-      vi.mocked(mockBreedingRepository.findById).mockResolvedValue(mockBreedingRecord);
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(null);
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.getExpectedBirths.mockRejectedValue(repositoryError);
 
-      await expect(service.addOffspring(mockBreedingRecord.id, 'invalid-offspring-id'))
-        .rejects.toThrow('Offspring not found');
-    });
-
-    it('should throw error when offspring is already associated', async () => {
-      vi.mocked(mockBreedingRepository.findById).mockResolvedValue(mockBreedingRecord);
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(mockOffspring);
-
-      await expect(service.addOffspring(mockBreedingRecord.id, mockOffspring.id))
-        .rejects.toThrow('Offspring is already associated with this breeding record');
-    });
-  });
-
-  describe('removeOffspring', () => {
-    it('should successfully remove offspring from breeding record', async () => {
-      const updatedBreeding = { ...mockBreedingRecord, offspringIds: [] };
-
-      vi.mocked(mockBreedingRepository.findById).mockResolvedValue(mockBreedingRecord);
-      vi.mocked(mockBreedingRepository.update).mockResolvedValue(updatedBreeding);
-
-      const result = await service.removeOffspring(mockBreedingRecord.id, mockOffspring.id);
-
-      expect(result).toEqual(updatedBreeding);
-      expect(mockBreedingRepository.update).toHaveBeenCalledWith(
-        mockBreedingRecord.id,
-        { offspringIds: [] }
-      );
-    });
-
-    it('should throw error when offspring is not associated', async () => {
-      const breedingWithoutOffspring = { ...mockBreedingRecord, offspringIds: [] };
-
-      vi.mocked(mockBreedingRepository.findById).mockResolvedValue(breedingWithoutOffspring);
-
-      await expect(service.removeOffspring(mockBreedingRecord.id, mockOffspring.id))
-        .rejects.toThrow('Offspring is not associated with this breeding record');
+      await expect(service.getExpectedBirths()).rejects.toThrow('Database connection failed');
     });
   });
 
   describe('getBreedingStatistics', () => {
     it('should calculate correct breeding statistics', async () => {
-      const breedingRecords = [
-        mockBreedingRecord,
-        {
-          ...mockBreedingRecord,
-          id: '550e8400-e29b-41d4-a716-446655440004',
-          offspringIds: [],
-          actualBirthDate: undefined
-        }
+      const records = [
+        BreedingRecordFactory.create({ 
+          breedingDate: new Date('2022-01-01'),
+          actualBirthDate: new Date('2022-12-01') // Successful
+        }),
+        BreedingRecordFactory.create({ 
+          breedingDate: new Date('2023-01-01'),
+          actualBirthDate: undefined, // Not yet born
+          expectedDueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // Future expected (30 days from now)
+        }),
+        BreedingRecordFactory.create({ 
+          breedingDate: new Date('2021-01-01'),
+          actualBirthDate: new Date('2021-11-15') // Successful
+        })
       ];
 
-      vi.mocked(mockBreedingRepository.findAll).mockResolvedValue(breedingRecords);
-      vi.mocked(mockAlpacaRepository.findAll).mockResolvedValue([mockSire, mockDam, mockOffspring]);
-      vi.mocked(mockBreedingRepository.checkInbreeding).mockResolvedValue(false);
+      const paginatedRecords: PaginatedResult<BreedingRecord> = {
+        data: records,
+        total: 3,
+        page: 1,
+        limit: 1000,
+        totalPages: 1
+      };
+
+      mockRepository.findAll.mockResolvedValue(paginatedRecords);
 
       const result = await service.getBreedingStatistics();
 
-      expect(result.totalBreedings).toBe(2);
-      expect(result.successfulBreedings).toBe(1);
-      expect(result.activeSires).toBe(1);
-      expect(result.activeDams).toBe(1);
-      expect(result.inbreedingRate).toBe(0);
+      expect(result.totalBreedings).toBe(3);
+      expect(result.successfulBreedings).toBe(2);
+      expect(result.expectedBirths).toBe(1);
+      expect(result.averageGestationDays).toBeGreaterThan(0);
+      expect(result.breedingsByYear).toBeInstanceOf(Array);
+      expect(mockRepository.findAll).toHaveBeenCalledWith({ limit: 1000 });
     });
-  });
 
-  describe('getGeneticDiversityMetrics', () => {
-    it('should calculate genetic diversity metrics', async () => {
-      const alpacas = [mockSire, mockDam, mockOffspring];
-      const breedingRecords = [mockBreedingRecord];
-
-      vi.mocked(mockAlpacaRepository.findAll).mockResolvedValue(alpacas);
-      vi.mocked(mockBreedingRepository.findAll).mockResolvedValue(breedingRecords);
-      vi.mocked(mockAlpacaRepository.getLineage).mockResolvedValue(null);
-
-      const result = await service.getGeneticDiversityMetrics();
-
-      expect(result.totalBreedingAnimals).toBe(2); // Sire and dam
-      expect(result.effectivePopulationSize).toBeGreaterThan(0);
-      expect(result.geneticDiversityIndex).toBeGreaterThanOrEqual(0);
-    });
-  });
-
-  describe('getBreedingRecommendations', () => {
-    it('should return breeding recommendations', async () => {
-      const alpacas = [mockSire, mockDam];
-
-      vi.mocked(mockAlpacaRepository.findAll).mockResolvedValue(alpacas);
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValue(mockSire)
-        .mockResolvedValue(mockDam);
-      vi.mocked(mockBreedingRepository.checkInbreeding).mockResolvedValue(false);
-      vi.mocked(mockAlpacaRepository.getLineage).mockResolvedValue(null);
-      vi.mocked(mockBreedingRepository.findByParent).mockResolvedValue([]);
-
-      const result = await service.getBreedingRecommendations(5);
-
-      expect(result).toBeInstanceOf(Array);
-      expect(result.length).toBeLessThanOrEqual(5);
-    });
-  });
-
-  describe('getBreedingCalendar', () => {
-    it('should return breeding calendar entries', async () => {
-      const breedingRecords = [mockBreedingRecord];
-
-      vi.mocked(mockBreedingRepository.findAll).mockResolvedValue(breedingRecords);
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValueOnce(mockSire)
-        .mockResolvedValueOnce(mockDam);
-
-      const result = await service.getBreedingCalendar(12);
-
-      expect(result).toBeInstanceOf(Array);
-      if (result.length > 0) {
-        expect(result[0]).toHaveProperty('breedingId');
-        expect(result[0]).toHaveProperty('sireName');
-        expect(result[0]).toHaveProperty('damName');
-        expect(result[0]).toHaveProperty('status');
-      }
-    });
-  });
-
-  describe('getOverdueBreedings', () => {
-    it('should return overdue breeding records', async () => {
-      const overdueBreeding: BreedingRecord = {
-        ...mockBreedingRecord,
-        expectedDueDate: new Date('2020-01-01'), // Past date
-        actualBirthDate: undefined // No birth recorded
+    it('should handle empty breeding records', async () => {
+      const emptyResult: PaginatedResult<BreedingRecord> = {
+        data: [],
+        total: 0,
+        page: 1,
+        limit: 1000,
+        totalPages: 0
       };
 
-      vi.mocked(mockBreedingRepository.findAll).mockResolvedValue([overdueBreeding]);
+      mockRepository.findAll.mockResolvedValue(emptyResult);
 
-      const result = await service.getOverdueBreedings();
+      const result = await service.getBreedingStatistics();
 
-      expect(result).toHaveLength(1);
-      expect(result[0]).toEqual(overdueBreeding);
+      expect(result.totalBreedings).toBe(0);
+      expect(result.successfulBreedings).toBe(0);
+      expect(result.expectedBirths).toBe(0);
+      expect(result.averageGestationDays).toBe(0);
+      expect(result.breedingsByYear).toEqual([]);
     });
 
-    it('should not return breeding records that have given birth', async () => {
-      const completedBreeding = mockBreedingRecord; // Has actualBirthDate
-
-      vi.mocked(mockBreedingRepository.findAll).mockResolvedValue([completedBreeding]);
-
-      const result = await service.getOverdueBreedings();
-
-      expect(result).toHaveLength(0);
-    });
-  });
-
-  describe('removeBreedingRecord', () => {
-    it('should successfully remove breeding record', async () => {
-      vi.mocked(mockBreedingRepository.findById).mockResolvedValue(mockBreedingRecord);
-      vi.mocked(mockBreedingRepository.delete).mockResolvedValue(true);
-
-      const result = await service.removeBreedingRecord(mockBreedingRecord.id);
-
-      expect(result).toBe(true);
-      expect(mockBreedingRepository.delete).toHaveBeenCalledWith(mockBreedingRecord.id);
-    });
-
-    it('should return false for non-existent breeding record', async () => {
-      vi.mocked(mockBreedingRepository.findById).mockResolvedValue(null);
-
-      const result = await service.removeBreedingRecord('invalid-id');
-
-      expect(result).toBe(false);
-    });
-  });
-
-  describe('calculateInbreedingCoefficient', () => {
-    it('should return 0 when no lineage data is available', async () => {
-      vi.mocked(mockAlpacaRepository.getLineage).mockResolvedValue(null);
-
-      const result = await service.calculateInbreedingCoefficient(mockSire.id, mockDam.id);
-
-      expect(result).toBe(0);
-    });
-
-    it('should return 0 when no common ancestors are found', async () => {
-      const sireLineage: LineageTree = {
-        alpaca: mockSire
-      };
-      const damLineage: LineageTree = {
-        alpaca: mockDam
-      };
-
-      vi.mocked(mockAlpacaRepository.getLineage)
-        .mockResolvedValueOnce(sireLineage)
-        .mockResolvedValueOnce(damLineage);
-
-      const result = await service.calculateInbreedingCoefficient(mockSire.id, mockDam.id);
-
-      expect(result).toBe(0);
-    });
-
-    it('should calculate coefficient when common ancestors exist', async () => {
-      const commonAncestor: Alpaca = {
-        id: '550e8400-e29b-41d4-a716-446655440005',
-        name: 'Common Ancestor',
-        birthDate: new Date('2015-01-01'),
-        gender: 'male',
-        color: 'brown',
-        createdAt: new Date(),
-        updatedAt: new Date()
-      };
-
-      const sireLineage: LineageTree = {
-        alpaca: mockSire,
-        sire: { alpaca: commonAncestor }
-      };
-      const damLineage: LineageTree = {
-        alpaca: mockDam,
-        sire: { alpaca: commonAncestor }
-      };
-
-      vi.mocked(mockAlpacaRepository.getLineage)
-        .mockResolvedValueOnce(sireLineage)
-        .mockResolvedValueOnce(damLineage);
-
-      const result = await service.calculateInbreedingCoefficient(mockSire.id, mockDam.id);
-
-      expect(result).toBeGreaterThan(0);
-      expect(result).toBeLessThanOrEqual(1);
-    });
-  });
-
-  describe('error handling', () => {
-    it('should wrap repository errors in service errors', async () => {
+    it('should handle repository errors', async () => {
       const repositoryError = new Error('Database connection failed');
-      vi.mocked(mockBreedingRepository.findById).mockRejectedValue(repositoryError);
+      mockRepository.findAll.mockRejectedValue(repositoryError);
 
-      await expect(service.getBreedingRecord(mockBreedingRecord.id))
-        .rejects.toThrow(BreedingServiceError);
+      await expect(service.getBreedingStatistics()).rejects.toThrow('Database connection failed');
     });
   });
+
+  describe('validateBreedingPair', () => {
+    it('should return compatible for valid IDs', async () => {
+      const result = await service.validateBreedingPair('sire-1', 'dam-1');
+
+      expect(result.compatible).toBe(true);
+      expect(result.reasons).toEqual([]);
+      expect(result.warnings).toEqual(['Basic validation passed - detailed genetic analysis not yet implemented']);
+    });
+
+    it('should return incompatible when sire ID is missing', async () => {
+      const result = await service.validateBreedingPair('', 'dam-1');
+
+      expect(result.compatible).toBe(false);
+      expect(result.reasons).toEqual(['Both sire and dam IDs are required']);
+      expect(result.warnings).toEqual([]);
+    });
+
+    it('should return incompatible when dam ID is missing', async () => {
+      const result = await service.validateBreedingPair('sire-1', '');
+
+      expect(result.compatible).toBe(false);
+      expect(result.reasons).toEqual(['Both sire and dam IDs are required']);
+      expect(result.warnings).toEqual([]);
+    });
+
+    it('should return incompatible when sire and dam are the same', async () => {
+      const result = await service.validateBreedingPair('same-id', 'same-id');
+
+      expect(result.compatible).toBe(false);
+      expect(result.reasons).toEqual(['Sire and dam cannot be the same alpaca']);
+      expect(result.warnings).toEqual([]);
+    });
+  });
+
+
 });

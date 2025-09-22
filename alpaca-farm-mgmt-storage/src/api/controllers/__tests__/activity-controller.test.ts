@@ -1,682 +1,1097 @@
 /**
- * Activity Controller Tests
- * Unit tests for the Activity Management REST controller
+ * Unit tests for ActivityController
+ * Requirements: 3.1, 3.2, 3.3, 3.4
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { Request, Response } from 'express';
-import { ActivityController } from '../activity-controller.js';
-import { ActivityService } from '../../../services/index.js';
-import { ApiErrorClass } from '../../errors.js';
-import { 
-  ManagementActivity, 
-  CreateActivityRequest, 
-  UpdateActivityRequest,
-  BulkActivityRequest 
-} from '../../types.js';
+import { Request, Response, NextFunction } from 'express';
+import { ActivityController, ApiResponse } from '../activity-controller';
+import { ActivityService } from '../../../services/activity-service';
+import { ManagementActivityFactory } from '../../../__tests__/data-factories';
+import { MockServiceFactory } from '../../../__tests__/mock-factories';
+import { CreateManagementActivityInput, UpdateManagementActivityInput } from '../../../models/management-activity';
+import { ActivityType } from '../../../models/common';
 
-// Mock ActivityService
-const mockActivityService = {
-  findAll: vi.fn(),
-  create: vi.fn(),
-  findById: vi.fn(),
-  update: vi.fn(),
-  delete: vi.fn(),
-  findByAlpaca: vi.fn(),
-  createBulkActivity: vi.fn(),
-  findByDateRange: vi.fn(),
-  findByActivityType: vi.fn(),
-  findByPerformer: vi.fn(),
-  getActivityStats: vi.fn(),
-  getRecentActivities: vi.fn(),
-  getActivitySummary: vi.fn(),
-  getAuditTrail: vi.fn(),
-  getScheduledActivities: vi.fn(),
-  getPerformanceMetrics: vi.fn()
-} as any;
-
-// Mock request and response objects
-function createMockRequest(overrides: any = {}): any {
-  return {
-    params: {},
-    query: {},
-    body: {},
-    validatedBody: undefined,
-    validatedQuery: undefined,
-    pagination: { page: 1, limit: 20, offset: 0 },
-    ...overrides
-  };
-}
-
-function createMockResponse(): any {
-  const res = {
-    status: vi.fn().mockReturnThis(),
-    json: vi.fn().mockReturnThis(),
-    send: vi.fn().mockReturnThis()
-  };
-  return res;
-}
+// Mock the ActivityService
+vi.mock('../../../services/activity-service');
 
 describe('ActivityController', () => {
   let controller: ActivityController;
-  let req: any;
-  let res: any;
+  let mockActivityService: jest.Mocked<ActivityService>;
+  let mockRequest: Partial<Request>;
+  let mockResponse: Partial<Response>;
+  let mockNext: NextFunction;
 
   beforeEach(() => {
-    controller = new ActivityController(mockActivityService);
-    req = createMockRequest();
-    res = createMockResponse();
     vi.clearAllMocks();
+    
+    // Create mock service
+    mockActivityService = {
+      getAllActivities: vi.fn(),
+      createActivity: vi.fn(),
+      getActivity: vi.fn(),
+      updateActivity: vi.fn(),
+      deleteActivity: vi.fn(),
+      getActivitiesByAlpaca: vi.fn(),
+      getActivitiesByType: vi.fn(),
+      getActivitiesByPerformer: vi.fn(),
+      getActivityStatistics: vi.fn(),
+      getAlpacaActivitySummary: vi.fn(),
+      getActivitiesByDateRange: vi.fn(),
+      createBulkActivity: vi.fn(),
+      getScheduledActivities: vi.fn(),
+      getPerformanceMetrics: vi.fn()
+    } as any;
+
+    // Create controller instance
+    controller = new ActivityController(mockActivityService);
+
+    // Create mock Express objects
+    mockRequest = MockServiceFactory.createMockRequest();
+    mockResponse = MockServiceFactory.createMockResponse();
+    mockNext = MockServiceFactory.createMockNext();
   });
 
-  describe('listActivities', () => {
-    it('should list activities with pagination', async () => {
-      const mockActivities = [
-        { 
-          id: '1', 
-          activityType: 'feeding', 
-          date: '2023-01-01',
-          alpacaIds: ['alpaca1'],
-          performedBy: 'John Doe',
-          description: 'Morning feeding'
-        },
-        { 
-          id: '2', 
-          activityType: 'shearing', 
-          date: '2023-01-02',
-          alpacaIds: ['alpaca2'],
-          performedBy: 'Jane Smith',
-          description: 'Annual shearing'
-        }
-      ];
-      
-      mockActivityService.findAll.mockResolvedValue({
-        activities: mockActivities,
-        total: 2
-      });
-
-      await controller.listActivities(req, res);
-
-      expect(mockActivityService.findAll).toHaveBeenCalledWith({
+  describe('getAllActivities', () => {
+    it('should return paginated activities with default pagination', async () => {
+      // Arrange
+      const mockActivities = ManagementActivityFactory.createMultiple(3);
+      const mockResult = {
+        data: mockActivities,
+        page: 1,
         limit: 20,
-        offset: 0
-      });
+        total: 3,
+        totalPages: 1
+      };
+      mockActivityService.getAllActivities.mockResolvedValue(mockResult);
+      mockRequest.query = {};
 
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      // Act
+      await controller.getAllActivities(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockActivityService.getAllActivities).toHaveBeenCalledWith({
+        limit: 20,
+        offset: 0,
+        sortBy: undefined,
+        sortOrder: 'desc'
+      });
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
         data: mockActivities,
         pagination: {
           page: 1,
           limit: 20,
-          total: 2,
+          total: 3,
           totalPages: 1
         }
       });
     });
 
-    it('should handle query parameters', async () => {
-      req.validatedQuery = {
-        activityType: 'feeding',
-        performedBy: 'John Doe',
-        dateFrom: '2023-01-01',
-        dateTo: '2023-12-31'
+    it('should handle custom pagination and sorting parameters', async () => {
+      // Arrange
+      const mockActivities = ManagementActivityFactory.createMultiple(2);
+      const mockResult = {
+        data: mockActivities,
+        page: 2,
+        limit: 10,
+        total: 25,
+        totalPages: 3
+      };
+      mockActivityService.getAllActivities.mockResolvedValue(mockResult);
+      mockRequest.query = {
+        page: '2',
+        limit: '10',
+        sortBy: 'date',
+        sortOrder: 'asc'
       };
 
-      mockActivityService.findAll.mockResolvedValue({
-        activities: [],
-        total: 0
-      });
+      // Act
+      await controller.getAllActivities(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await controller.listActivities(req, res);
-
-      expect(mockActivityService.findAll).toHaveBeenCalledWith({
-        activityType: 'feeding',
-        performedBy: 'John Doe',
-        dateFrom: '2023-01-01',
-        dateTo: '2023-12-31',
-        limit: 20,
-        offset: 0
+      // Assert
+      expect(mockActivityService.getAllActivities).toHaveBeenCalledWith({
+        limit: 10,
+        offset: 10,
+        sortBy: 'date',
+        sortOrder: 'asc'
       });
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: mockActivities,
+        pagination: {
+          page: mockResult.page,
+          limit: mockResult.limit,
+          total: mockResult.total,
+          totalPages: mockResult.totalPages
+        }
+      });
+    });
+
+    it('should handle service errors', async () => {
+      // Arrange
+      const error = new Error('Database connection failed');
+      mockActivityService.getAllActivities.mockRejectedValue(error);
+      mockRequest.query = {};
+
+      // Act
+      await controller.getAllActivities(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
   describe('createActivity', () => {
-    it('should create a new activity', async () => {
-      const createRequest: CreateActivityRequest = {
-        activityType: 'feeding',
-        date: '2023-01-01',
-        alpacaIds: ['alpaca1', 'alpaca2'],
-        performedBy: 'John Doe',
-        description: 'Morning feeding session'
-      };
+    it('should create activity successfully', async () => {
+      // Arrange
+      const alpacaIds = ['alpaca-1', 'alpaca-2'];
+      const inputData = ManagementActivityFactory.createInput({ alpacaIds });
+      const createdActivity = ManagementActivityFactory.create(inputData);
+      mockActivityService.createActivity.mockResolvedValue(createdActivity);
+      mockRequest.body = inputData;
 
-      const createdActivity: ManagementActivity = {
-        id: 'new-id',
-        ...createRequest,
-        createdAt: '2023-01-01T00:00:00Z'
-      };
+      // Act
+      await controller.createActivity(mockRequest as Request, mockResponse as Response, mockNext);
 
-      req.validatedBody = createRequest;
-      mockActivityService.create.mockResolvedValue(createdActivity);
-
-      await controller.createActivity(req, res);
-
-      expect(mockActivityService.create).toHaveBeenCalledWith(createRequest);
-      expect(res.status).toHaveBeenCalledWith(201);
-      expect(res.json).toHaveBeenCalledWith({
+      // Assert
+      expect(mockActivityService.createActivity).toHaveBeenCalledWith(inputData, alpacaIds);
+      expect(mockResponse.status).toHaveBeenCalledWith(201);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
         data: createdActivity
       });
     });
+
+    it('should handle string date conversion', async () => {
+      // Arrange
+      const alpacaIds = ['alpaca-1'];
+      const inputData = ManagementActivityFactory.createInput({ alpacaIds });
+      const inputWithStringDate = {
+        ...inputData,
+        date: '2024-01-01T00:00:00.000Z'
+      };
+      const createdActivity = ManagementActivityFactory.create(inputData);
+      mockActivityService.createActivity.mockResolvedValue(createdActivity);
+      mockRequest.body = inputWithStringDate;
+
+      // Act
+      await controller.createActivity(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      const expectedInput = {
+        ...inputWithStringDate,
+        date: new Date('2024-01-01T00:00:00.000Z')
+      };
+      expect(mockActivityService.createActivity).toHaveBeenCalledWith(expectedInput, alpacaIds);
+    });
+
+    it('should return 400 when alpacaIds is missing', async () => {
+      // Arrange
+      const inputData = ManagementActivityFactory.createInput();
+      delete inputData.alpacaIds;
+      mockRequest.body = inputData;
+
+      // Act
+      await controller.createActivity(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(400);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'MISSING_ALPACAS',
+          message: 'At least one alpaca ID must be provided'
+        }
+      });
+      expect(mockActivityService.createActivity).not.toHaveBeenCalled();
+    });
+
+    it('should return 400 when alpacaIds is empty array', async () => {
+      // Arrange
+      const inputData = ManagementActivityFactory.createInput({ alpacaIds: [] });
+      mockRequest.body = inputData;
+
+      // Act
+      await controller.createActivity(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(400);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'MISSING_ALPACAS',
+          message: 'At least one alpaca ID must be provided'
+        }
+      });
+    });
+
+    it('should return 400 when alpacaIds is not an array', async () => {
+      // Arrange
+      const inputData = ManagementActivityFactory.createInput();
+      const inputWithInvalidAlpacaIds = {
+        ...inputData,
+        alpacaIds: 'not-an-array'
+      };
+      mockRequest.body = inputWithInvalidAlpacaIds;
+
+      // Act
+      await controller.createActivity(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(400);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'MISSING_ALPACAS',
+          message: 'At least one alpaca ID must be provided'
+        }
+      });
+    });
+
+    it('should handle service validation errors', async () => {
+      // Arrange
+      const alpacaIds = ['alpaca-1'];
+      const inputData = ManagementActivityFactory.createInput({ alpacaIds });
+      const validationError = new Error('Invalid activity data');
+      mockActivityService.createActivity.mockRejectedValue(validationError);
+      mockRequest.body = inputData;
+
+      // Act
+      await controller.createActivity(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(validationError);
+    });
   });
 
   describe('getActivity', () => {
-    it('should get activity by ID', async () => {
-      const activity: ManagementActivity = {
-        id: 'test-id',
-        activityType: 'feeding',
-        date: '2023-01-01',
-        alpacaIds: ['alpaca1'],
-        performedBy: 'John Doe',
-        description: 'Morning feeding',
-        createdAt: '2023-01-01T00:00:00Z'
-      };
+    it('should return activity when found', async () => {
+      // Arrange
+      const activity = ManagementActivityFactory.create();
+      mockActivityService.getActivity.mockResolvedValue(activity);
+      mockRequest.params = { id: activity.id };
 
-      req.params = { id: 'test-id' };
-      mockActivityService.findById.mockResolvedValue(activity);
+      // Act
+      await controller.getActivity(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await controller.getActivity(req, res);
-
-      expect(mockActivityService.findById).toHaveBeenCalledWith('test-id');
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      // Assert
+      expect(mockActivityService.getActivity).toHaveBeenCalledWith(activity.id);
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
         data: activity
       });
     });
 
-    it('should throw not found error when activity does not exist', async () => {
-      req.params = { id: 'non-existent-id' };
-      mockActivityService.findById.mockResolvedValue(null);
+    it('should return 404 when activity not found', async () => {
+      // Arrange
+      const activityId = 'non-existent-id';
+      mockActivityService.getActivity.mockResolvedValue(null);
+      mockRequest.params = { id: activityId };
 
-      await expect(controller.getActivity(req, res)).rejects.toThrow(ApiErrorClass);
-      
-      expect(mockActivityService.findById).toHaveBeenCalledWith('non-existent-id');
+      // Act
+      await controller.getActivity(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockActivityService.getActivity).toHaveBeenCalledWith(activityId);
+      expect(mockResponse.status).toHaveBeenCalledWith(404);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Activity not found'
+        }
+      });
+    });
+
+    it('should handle service errors', async () => {
+      // Arrange
+      const activityId = 'test-id';
+      const error = new Error('Database error');
+      mockActivityService.getActivity.mockRejectedValue(error);
+      mockRequest.params = { id: activityId };
+
+      // Act
+      await controller.getActivity(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
   describe('updateActivity', () => {
-    it('should update activity', async () => {
-      const updateRequest: UpdateActivityRequest = {
-        description: 'Updated feeding session',
-        notes: 'Added extra hay'
-      };
+    it('should update activity successfully', async () => {
+      // Arrange
+      const activityId = 'test-id';
+      const alpacaIds = ['alpaca-1', 'alpaca-2'];
+      const updateData = ManagementActivityFactory.updateInput({ alpacaIds });
+      const updatedActivity = ManagementActivityFactory.create({ id: activityId, ...updateData });
+      mockActivityService.updateActivity.mockResolvedValue(updatedActivity);
+      mockRequest.params = { id: activityId };
+      mockRequest.body = updateData;
 
-      const updatedActivity: ManagementActivity = {
-        id: 'test-id',
-        activityType: 'feeding',
-        date: '2023-01-01',
-        alpacaIds: ['alpaca1'],
-        performedBy: 'John Doe',
-        description: 'Updated feeding session',
-        notes: 'Added extra hay',
-        createdAt: '2023-01-01T00:00:00Z'
-      };
+      // Act
+      await controller.updateActivity(mockRequest as Request, mockResponse as Response, mockNext);
 
-      req.params = { id: 'test-id' };
-      req.validatedBody = updateRequest;
-      mockActivityService.update.mockResolvedValue(updatedActivity);
-
-      await controller.updateActivity(req, res);
-
-      expect(mockActivityService.update).toHaveBeenCalledWith('test-id', updateRequest);
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      // Assert
+      expect(mockActivityService.updateActivity).toHaveBeenCalledWith(activityId, updateData, alpacaIds);
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
         data: updatedActivity
       });
     });
+
+    it('should handle string date conversion in updates', async () => {
+      // Arrange
+      const activityId = 'test-id';
+      const updateData = {
+        ...ManagementActivityFactory.updateInput(),
+        date: '2024-01-01T00:00:00.000Z'
+      };
+      const updatedActivity = ManagementActivityFactory.create({ id: activityId });
+      mockActivityService.updateActivity.mockResolvedValue(updatedActivity);
+      mockRequest.params = { id: activityId };
+      mockRequest.body = updateData;
+
+      // Act
+      await controller.updateActivity(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      const expectedUpdateData = {
+        ...updateData,
+        date: new Date('2024-01-01T00:00:00.000Z')
+      };
+      expect(mockActivityService.updateActivity).toHaveBeenCalledWith(activityId, expectedUpdateData, undefined);
+    });
+
+    it('should return 404 when activity not found for update', async () => {
+      // Arrange
+      const activityId = 'non-existent-id';
+      const updateData = ManagementActivityFactory.updateInput();
+      mockActivityService.updateActivity.mockResolvedValue(null);
+      mockRequest.params = { id: activityId };
+      mockRequest.body = updateData;
+
+      // Act
+      await controller.updateActivity(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(404);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Activity not found'
+        }
+      });
+    });
+
+    it('should handle service errors during update', async () => {
+      // Arrange
+      const activityId = 'test-id';
+      const updateData = ManagementActivityFactory.updateInput();
+      const error = new Error('Update failed');
+      mockActivityService.updateActivity.mockRejectedValue(error);
+      mockRequest.params = { id: activityId };
+      mockRequest.body = updateData;
+
+      // Act
+      await controller.updateActivity(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
+    });
   });
 
   describe('deleteActivity', () => {
-    it('should delete activity', async () => {
-      req.params = { id: 'test-id' };
-      mockActivityService.delete.mockResolvedValue(true);
+    it('should delete activity successfully', async () => {
+      // Arrange
+      const activityId = 'test-id';
+      mockActivityService.deleteActivity.mockResolvedValue(true);
+      mockRequest.params = { id: activityId };
 
-      await controller.deleteActivity(req, res);
+      // Act
+      await controller.deleteActivity(mockRequest as Request, mockResponse as Response, mockNext);
 
-      expect(mockActivityService.delete).toHaveBeenCalledWith('test-id');
-      expect(res.status).toHaveBeenCalledWith(204);
-      expect(res.send).toHaveBeenCalled();
+      // Assert
+      expect(mockActivityService.deleteActivity).toHaveBeenCalledWith(activityId);
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: { message: 'Activity deleted successfully' }
+      });
     });
 
-    it('should throw not found error when activity does not exist', async () => {
-      req.params = { id: 'non-existent-id' };
-      mockActivityService.delete.mockResolvedValue(false);
+    it('should return 404 when activity not found for deletion', async () => {
+      // Arrange
+      const activityId = 'non-existent-id';
+      mockActivityService.deleteActivity.mockResolvedValue(false);
+      mockRequest.params = { id: activityId };
 
-      await expect(controller.deleteActivity(req, res)).rejects.toThrow(ApiErrorClass);
-      
-      expect(mockActivityService.delete).toHaveBeenCalledWith('non-existent-id');
-    });
-  });
+      // Act
+      await controller.deleteActivity(mockRequest as Request, mockResponse as Response, mockNext);
 
-  describe('getAlpacaActivities', () => {
-    it('should get activities for alpaca', async () => {
-      const activities = [
-        { 
-          id: '1', 
-          activityType: 'feeding', 
-          date: '2023-01-01',
-          alpacaIds: ['alpaca1'],
-          performedBy: 'John Doe',
-          description: 'Feeding'
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(404);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Activity not found'
         }
-      ];
-
-      req.params = { id: 'alpaca1' };
-      req.query = {};
-      mockActivityService.findByAlpaca.mockResolvedValue(activities);
-
-      await controller.getAlpacaActivities(req, res);
-
-      expect(mockActivityService.findByAlpaca).toHaveBeenCalledWith('alpaca1', { alpacaId: 'alpaca1' });
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
-        success: true,
-        data: activities
       });
     });
 
-    it('should handle query filters', async () => {
-      const activities = [];
+    it('should handle service errors during deletion', async () => {
+      // Arrange
+      const activityId = 'test-id';
+      const error = new Error('Deletion failed');
+      mockActivityService.deleteActivity.mockRejectedValue(error);
+      mockRequest.params = { id: activityId };
 
-      req.params = { id: 'alpaca1' };
-      req.query = {
-        activityType: 'feeding',
-        dateFrom: '2023-01-01',
-        dateTo: '2023-12-31'
-      };
-      mockActivityService.findByAlpaca.mockResolvedValue(activities);
+      // Act
+      await controller.deleteActivity(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await controller.getAlpacaActivities(req, res);
-
-      expect(mockActivityService.findByAlpaca).toHaveBeenCalledWith('alpaca1', {
-        alpacaId: 'alpaca1',
-        activityType: 'feeding',
-        dateFrom: '2023-01-01',
-        dateTo: '2023-12-31'
-      });
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
-  describe('createBulkActivity', () => {
-    it('should create bulk activity', async () => {
-      const bulkRequest: BulkActivityRequest = {
-        activityType: 'shearing',
-        date: '2023-06-01',
-        alpacaIds: ['alpaca1', 'alpaca2', 'alpaca3'],
-        performedBy: 'Shearing Team',
-        description: 'Annual herd shearing'
+  describe('getActivitiesByAlpaca', () => {
+    it('should return activities for specific alpaca', async () => {
+      // Arrange
+      const alpacaId = 'alpaca-123';
+      const mockActivities = ManagementActivityFactory.createMultiple(3).map(a => ({
+        ...a,
+        alpacaIds: [alpacaId]
+      }));
+      const mockResult = {
+        data: mockActivities,
+        page: 1,
+        limit: 20,
+        total: 3,
+        totalPages: 1
       };
+      mockActivityService.getActivitiesByAlpaca.mockResolvedValue(mockResult);
+      mockRequest.params = { alpacaId };
+      mockRequest.query = {};
 
-      const createdActivity: ManagementActivity = {
-        id: 'bulk-id',
-        ...bulkRequest,
-        createdAt: '2023-06-01T00:00:00Z'
-      };
+      // Act
+      await controller.getActivitiesByAlpaca(mockRequest as Request, mockResponse as Response, mockNext);
 
-      req.validatedBody = bulkRequest;
-      mockActivityService.createBulkActivity.mockResolvedValue(createdActivity);
-
-      await controller.createBulkActivity(req, res);
-
-      expect(mockActivityService.createBulkActivity).toHaveBeenCalledWith(bulkRequest);
-      expect(res.status).toHaveBeenCalledWith(201);
-      expect(res.json).toHaveBeenCalledWith({
-        success: true,
-        data: createdActivity
+      // Assert
+      expect(mockActivityService.getActivitiesByAlpaca).toHaveBeenCalledWith(alpacaId, {
+        limit: 20,
+        offset: 0
       });
-    });
-  });
-
-  describe('getActivitiesByDateRange', () => {
-    it('should get activities by date range', async () => {
-      const activities = [
-        { 
-          id: '1', 
-          activityType: 'feeding', 
-          date: '2023-06-01',
-          alpacaIds: ['alpaca1'],
-          performedBy: 'John Doe',
-          description: 'Mid-year feeding'
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: mockActivities,
+        pagination: {
+          page: mockResult.page,
+          limit: mockResult.limit,
+          total: mockResult.total,
+          totalPages: mockResult.totalPages
         }
-      ];
-
-      req.query = {
-        dateFrom: '2023-01-01',
-        dateTo: '2023-12-31'
-      };
-      mockActivityService.findByDateRange.mockResolvedValue(activities);
-
-      await controller.getActivitiesByDateRange(req, res);
-
-      expect(mockActivityService.findByDateRange).toHaveBeenCalledWith('2023-01-01', '2023-12-31');
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
-        success: true,
-        data: activities
       });
     });
 
-    it('should require dateFrom and dateTo parameters', async () => {
-      req.query = { dateFrom: '2023-01-01' }; // Missing dateTo
-
-      await expect(controller.getActivitiesByDateRange(req, res)).rejects.toThrow(ApiErrorClass);
-    });
-  });
-
-  describe('getActivitiesByType', () => {
-    it('should get activities by type', async () => {
-      const activities = [
-        { 
-          id: '1', 
-          activityType: 'feeding', 
-          date: '2023-01-01',
-          alpacaIds: ['alpaca1'],
-          performedBy: 'John Doe',
-          description: 'Feeding activity'
-        }
-      ];
-
-      req.params = { type: 'feeding' };
-      req.query = {};
-      mockActivityService.findByActivityType.mockResolvedValue(activities);
-
-      await controller.getActivitiesByType(req, res);
-
-      expect(mockActivityService.findByActivityType).toHaveBeenCalledWith('feeding', undefined);
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
-        success: true,
-        data: activities
-      });
-    });
-
-    it('should handle pagination for type query', async () => {
-      const result = {
-        activities: [],
-        total: 0
-      };
-
-      req.params = { type: 'feeding' };
-      req.query = { page: '2', limit: '10' };
-      mockActivityService.findByActivityType.mockResolvedValue(result);
-
-      await controller.getActivitiesByType(req, res);
-
-      expect(mockActivityService.findByActivityType).toHaveBeenCalledWith('feeding', {
+    it('should handle pagination for alpaca activities', async () => {
+      // Arrange
+      const alpacaId = 'alpaca-123';
+      const mockResult = {
+        data: [],
         page: 2,
+        limit: 10,
+        total: 25,
+        totalPages: 3
+      };
+      mockActivityService.getActivitiesByAlpaca.mockResolvedValue(mockResult);
+      mockRequest.params = { alpacaId };
+      mockRequest.query = {
+        page: '2',
+        limit: '10'
+      };
+
+      // Act
+      await controller.getActivitiesByAlpaca(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockActivityService.getActivitiesByAlpaca).toHaveBeenCalledWith(alpacaId, {
         limit: 10,
         offset: 10
       });
     });
+
+    it('should handle service errors for alpaca activities', async () => {
+      // Arrange
+      const alpacaId = 'alpaca-123';
+      const error = new Error('Failed to fetch alpaca activities');
+      mockActivityService.getActivitiesByAlpaca.mockRejectedValue(error);
+      mockRequest.params = { alpacaId };
+      mockRequest.query = {};
+
+      // Act
+      await controller.getActivitiesByAlpaca(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
+    });
+  });
+
+  describe('getActivitiesByType', () => {
+    it('should return activities filtered by valid activity type', async () => {
+      // Arrange
+      const activityType: ActivityType = 'feeding';
+      const mockActivities = ManagementActivityFactory.createMultiple(3).map(a => ({ ...a, activityType }));
+      const mockResult = {
+        data: mockActivities,
+        page: 1,
+        limit: 20,
+        total: 3,
+        totalPages: 1
+      };
+      mockActivityService.getActivitiesByType.mockResolvedValue(mockResult);
+      mockRequest.params = { activityType };
+      mockRequest.query = {};
+
+      // Act
+      await controller.getActivitiesByType(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockActivityService.getActivitiesByType).toHaveBeenCalledWith(activityType, {
+        limit: 20,
+        offset: 0
+      });
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: mockActivities,
+        pagination: {
+          page: mockResult.page,
+          limit: mockResult.limit,
+          total: mockResult.total,
+          totalPages: mockResult.totalPages
+        }
+      });
+    });
+
+    it('should return 400 for invalid activity type', async () => {
+      // Arrange
+      const invalidActivityType = 'invalid-type';
+      mockRequest.params = { activityType: invalidActivityType };
+
+      // Act
+      await controller.getActivitiesByType(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(400);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'INVALID_ACTIVITY_TYPE',
+          message: 'Activity type must be one of: feeding, shearing, weighing, moving, training, other'
+        }
+      });
+      expect(mockActivityService.getActivitiesByType).not.toHaveBeenCalled();
+    });
+
+    it('should handle all valid activity types', async () => {
+      const validTypes: ActivityType[] = ['feeding', 'shearing', 'weighing', 'moving', 'training', 'other'];
+      
+      for (const activityType of validTypes) {
+        // Arrange
+        const mockResult = {
+          data: [],
+          page: 1,
+          limit: 20,
+          total: 0,
+          totalPages: 0
+        };
+        mockActivityService.getActivitiesByType.mockResolvedValue(mockResult);
+        mockRequest.params = { activityType };
+        mockRequest.query = {};
+
+        // Act
+        await controller.getActivitiesByType(mockRequest as Request, mockResponse as Response, mockNext);
+
+        // Assert
+        expect(mockActivityService.getActivitiesByType).toHaveBeenCalledWith(activityType, {
+          limit: 20,
+          offset: 0
+        });
+        expect(mockResponse.status).toHaveBeenCalledWith(200);
+        
+        // Reset mocks for next iteration
+        vi.clearAllMocks();
+        mockActivityService.getActivitiesByType = vi.fn();
+      }
+    });
+
+    it('should handle service errors for activity type filtering', async () => {
+      // Arrange
+      const activityType: ActivityType = 'feeding';
+      const error = new Error('Failed to filter by activity type');
+      mockActivityService.getActivitiesByType.mockRejectedValue(error);
+      mockRequest.params = { activityType };
+      mockRequest.query = {};
+
+      // Act
+      await controller.getActivitiesByType(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
+    });
   });
 
   describe('getActivitiesByPerformer', () => {
-    it('should get activities by performer', async () => {
-      const activities = [
-        { 
-          id: '1', 
-          activityType: 'feeding', 
-          date: '2023-01-01',
-          alpacaIds: ['alpaca1'],
-          performedBy: 'John Doe',
-          description: 'Feeding activity'
-        }
-      ];
-
-      req.params = { performer: 'John Doe' };
-      req.query = {};
-      mockActivityService.findByPerformer.mockResolvedValue(activities);
-
-      await controller.getActivitiesByPerformer(req, res);
-
-      expect(mockActivityService.findByPerformer).toHaveBeenCalledWith('John Doe', undefined);
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
-        success: true,
-        data: activities
-      });
-    });
-  });
-
-  describe('getAlpacaActivityStats', () => {
-    it('should get activity statistics for alpaca', async () => {
-      const stats = {
-        totalActivities: 15,
-        feedingCount: 10,
-        shearingCount: 2,
-        weighingCount: 2,
-        trainingCount: 1,
-        lastActivity: '2023-06-01',
-        mostFrequentActivity: 'feeding'
+    it('should return activities for specific performer', async () => {
+      // Arrange
+      const performer = 'John Doe';
+      const mockActivities = ManagementActivityFactory.createMultiple(3).map(a => ({ ...a, performedBy: performer }));
+      const mockResult = {
+        data: mockActivities,
+        page: 1,
+        limit: 20,
+        total: 3,
+        totalPages: 1
       };
+      mockActivityService.getActivitiesByPerformer.mockResolvedValue(mockResult);
+      mockRequest.params = { performer };
+      mockRequest.query = {};
 
-      req.params = { id: 'alpaca1' };
-      mockActivityService.getActivityStats.mockResolvedValue(stats);
+      // Act
+      await controller.getActivitiesByPerformer(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await controller.getAlpacaActivityStats(req, res);
-
-      expect(mockActivityService.getActivityStats).toHaveBeenCalledWith('alpaca1');
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
-        success: true,
-        data: stats
+      // Assert
+      expect(mockActivityService.getActivitiesByPerformer).toHaveBeenCalledWith(performer, {
+        limit: 20,
+        offset: 0
       });
-    });
-  });
-
-  describe('getRecentActivities', () => {
-    it('should get recent activities with default days', async () => {
-      const activities = [
-        { 
-          id: '1', 
-          activityType: 'feeding', 
-          date: '2023-12-15',
-          alpacaIds: ['alpaca1'],
-          performedBy: 'John Doe',
-          description: 'Recent feeding'
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: mockActivities,
+        pagination: {
+          page: mockResult.page,
+          limit: mockResult.limit,
+          total: mockResult.total,
+          totalPages: mockResult.totalPages
         }
-      ];
-
-      req.query = {};
-      mockActivityService.getRecentActivities.mockResolvedValue(activities);
-
-      await controller.getRecentActivities(req, res);
-
-      expect(mockActivityService.getRecentActivities).toHaveBeenCalledWith(7, 50);
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
-        success: true,
-        data: activities
       });
     });
 
-    it('should get recent activities with custom parameters', async () => {
-      const activities = [];
+    it('should handle service errors for performer filtering', async () => {
+      // Arrange
+      const performer = 'John Doe';
+      const error = new Error('Failed to filter by performer');
+      mockActivityService.getActivitiesByPerformer.mockRejectedValue(error);
+      mockRequest.params = { performer };
+      mockRequest.query = {};
 
-      req.query = { days: '3', limit: '10' };
-      mockActivityService.getRecentActivities.mockResolvedValue(activities);
+      // Act
+      await controller.getActivitiesByPerformer(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await controller.getRecentActivities(req, res);
-
-      expect(mockActivityService.getRecentActivities).toHaveBeenCalledWith(3, 10);
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
-  describe('getActivitySummary', () => {
-    it('should get activity summary', async () => {
-      const summary = {
+  describe('getActivityStatistics', () => {
+    it('should return activity statistics', async () => {
+      // Arrange
+      const mockStats = {
         totalActivities: 100,
-        byType: {
-          feeding: 60,
+        activitiesByType: {
+          feeding: 40,
           shearing: 20,
           weighing: 15,
-          training: 5
+          moving: 10,
+          training: 10,
+          other: 5
         },
-        byDate: [
-          { date: '2023-01-01', count: 5 },
-          { date: '2023-01-02', count: 3 }
-        ]
+        activitiesThisMonth: 25,
+        mostActivePerformer: 'John Doe'
       };
+      mockActivityService.getActivityStatistics.mockResolvedValue(mockStats);
 
-      req.query = {
-        dateFrom: '2023-01-01',
-        dateTo: '2023-12-31',
-        groupBy: 'day'
-      };
-      mockActivityService.getActivitySummary.mockResolvedValue(summary);
+      // Act
+      await controller.getActivityStatistics(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await controller.getActivitySummary(req, res);
-
-      expect(mockActivityService.getActivitySummary).toHaveBeenCalledWith('2023-01-01', '2023-12-31', 'day');
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      // Assert
+      expect(mockActivityService.getActivityStatistics).toHaveBeenCalled();
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
-        data: summary
+        data: mockStats
       });
     });
 
-    it('should require dateFrom and dateTo parameters', async () => {
-      req.query = { dateFrom: '2023-01-01' }; // Missing dateTo
+    it('should handle service errors for activity statistics', async () => {
+      // Arrange
+      const error = new Error('Failed to calculate activity statistics');
+      mockActivityService.getActivityStatistics.mockRejectedValue(error);
 
-      await expect(controller.getActivitySummary(req, res)).rejects.toThrow(ApiErrorClass);
+      // Act
+      await controller.getActivityStatistics(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
-  describe('getActivityAuditTrail', () => {
-    it('should get activity audit trail', async () => {
-      const result = {
-        activities: [
-          { 
-            id: '1', 
-            activityType: 'feeding', 
-            date: '2023-01-01',
-            alpacaIds: ['alpaca1'],
-            performedBy: 'John Doe',
-            description: 'Audit trail activity'
-          }
-        ],
-        total: 1
-      };
-
-      req.query = {
-        alpacaId: 'alpaca1',
-        performedBy: 'John Doe'
-      };
-      mockActivityService.getAuditTrail.mockResolvedValue(result);
-
-      await controller.getActivityAuditTrail(req, res);
-
-      expect(mockActivityService.getAuditTrail).toHaveBeenCalledWith(
-        {
-          alpacaId: 'alpaca1',
-          performedBy: 'John Doe'
+  describe('getAlpacaActivitySummary', () => {
+    it('should return activity summary for alpaca', async () => {
+      // Arrange
+      const alpacaId = 'alpaca-123';
+      const mockSummary = {
+        alpacaId,
+        totalActivities: 15,
+        lastActivity: new Date('2024-01-01'),
+        activitiesByType: {
+          feeding: 8,
+          weighing: 3,
+          shearing: 2,
+          other: 2
         },
+        recentActivities: ManagementActivityFactory.createMultiple(3)
+      };
+      mockActivityService.getAlpacaActivitySummary.mockResolvedValue(mockSummary);
+      mockRequest.params = { alpacaId };
+
+      // Act
+      await controller.getAlpacaActivitySummary(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockActivityService.getAlpacaActivitySummary).toHaveBeenCalledWith(alpacaId);
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: mockSummary
+      });
+    });
+
+    it('should handle service errors for alpaca activity summary', async () => {
+      // Arrange
+      const alpacaId = 'alpaca-123';
+      const error = new Error('Failed to generate activity summary');
+      mockActivityService.getAlpacaActivitySummary.mockRejectedValue(error);
+      mockRequest.params = { alpacaId };
+
+      // Act
+      await controller.getAlpacaActivitySummary(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
+    });
+  });
+
+  describe('getActivitiesByDateRange', () => {
+    it('should return activities within date range', async () => {
+      // Arrange
+      const startDate = '2024-01-01';
+      const endDate = '2024-12-31';
+      const mockActivities = ManagementActivityFactory.createMultiple(3);
+      const mockResult = {
+        data: mockActivities,
+        page: 1,
+        limit: 20,
+        total: 3,
+        totalPages: 1
+      };
+      mockActivityService.getActivitiesByDateRange.mockResolvedValue(mockResult);
+      mockRequest.query = {
+        startDate,
+        endDate
+      };
+
+      // Act
+      await controller.getActivitiesByDateRange(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockActivityService.getActivitiesByDateRange).toHaveBeenCalledWith(
+        new Date(startDate),
+        new Date(endDate),
         {
           limit: 20,
           offset: 0
         }
       );
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
-        data: result.activities,
+        data: mockActivities,
         pagination: {
-          page: 1,
-          limit: 20,
-          total: 1,
-          totalPages: 1
+          page: mockResult.page,
+          limit: mockResult.limit,
+          total: mockResult.total,
+          totalPages: mockResult.totalPages
         }
       });
+    });
+
+    it('should return 400 when startDate is missing', async () => {
+      // Arrange
+      mockRequest.query = {
+        endDate: '2024-12-31'
+      };
+
+      // Act
+      await controller.getActivitiesByDateRange(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(400);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'MISSING_PARAMETERS',
+          message: 'Both startDate and endDate are required'
+        }
+      });
+      expect(mockActivityService.getActivitiesByDateRange).not.toHaveBeenCalled();
+    });
+
+    it('should return 400 when endDate is missing', async () => {
+      // Arrange
+      mockRequest.query = {
+        startDate: '2024-01-01'
+      };
+
+      // Act
+      await controller.getActivitiesByDateRange(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(400);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'MISSING_PARAMETERS',
+          message: 'Both startDate and endDate are required'
+        }
+      });
+    });
+
+    it('should return 400 for invalid date format', async () => {
+      // Arrange
+      mockRequest.query = {
+        startDate: 'invalid-date',
+        endDate: '2024-12-31'
+      };
+
+      // Act
+      await controller.getActivitiesByDateRange(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(400);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'INVALID_DATE',
+          message: 'Invalid date format. Use YYYY-MM-DD'
+        }
+      });
+    });
+
+    it('should handle service errors for date range query', async () => {
+      // Arrange
+      const error = new Error('Failed to fetch activities by date range');
+      mockActivityService.getActivitiesByDateRange.mockRejectedValue(error);
+      mockRequest.query = {
+        startDate: '2024-01-01',
+        endDate: '2024-12-31'
+      };
+
+      // Act
+      await controller.getActivitiesByDateRange(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
+    });
+  });
+
+  describe('createBulkActivity', () => {
+    it('should create bulk activity successfully', async () => {
+      // Arrange
+      const alpacaIds = ['alpaca-1', 'alpaca-2', 'alpaca-3'];
+      const inputData = ManagementActivityFactory.createInput({ alpacaIds });
+      const createdActivity = ManagementActivityFactory.createBulkActivity(3, inputData);
+      mockActivityService.createBulkActivity.mockResolvedValue(createdActivity);
+      mockRequest.body = inputData;
+
+      // Act
+      await controller.createBulkActivity(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockActivityService.createBulkActivity).toHaveBeenCalledWith(inputData, alpacaIds);
+      expect(mockResponse.status).toHaveBeenCalledWith(201);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: createdActivity
+      });
+    });
+
+    it('should handle string date conversion for bulk activity', async () => {
+      // Arrange
+      const alpacaIds = ['alpaca-1', 'alpaca-2'];
+      const inputData = ManagementActivityFactory.createInput({ alpacaIds });
+      const inputWithStringDate = {
+        ...inputData,
+        date: '2024-01-01T00:00:00.000Z'
+      };
+      const createdActivity = ManagementActivityFactory.createBulkActivity(2);
+      mockActivityService.createBulkActivity.mockResolvedValue(createdActivity);
+      mockRequest.body = inputWithStringDate;
+
+      // Act
+      await controller.createBulkActivity(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      const expectedInput = {
+        ...inputWithStringDate,
+        date: new Date('2024-01-01T00:00:00.000Z')
+      };
+      expect(mockActivityService.createBulkActivity).toHaveBeenCalledWith(expectedInput, alpacaIds);
+    });
+
+    it('should handle service errors for bulk activity creation', async () => {
+      // Arrange
+      const alpacaIds = ['alpaca-1'];
+      const inputData = ManagementActivityFactory.createInput({ alpacaIds });
+      const error = new Error('Failed to create bulk activity');
+      mockActivityService.createBulkActivity.mockRejectedValue(error);
+      mockRequest.body = inputData;
+
+      // Act
+      await controller.createBulkActivity(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
   describe('getScheduledActivities', () => {
-    it('should get scheduled activities', async () => {
-      const activities = [
-        { 
-          id: '1', 
-          activityType: 'shearing', 
-          date: '2024-06-01',
-          alpacaIds: ['alpaca1'],
-          performedBy: 'Scheduled Team',
-          description: 'Scheduled shearing'
+    it('should return scheduled activities with default days ahead', async () => {
+      // Arrange
+      const scheduledActivities = ManagementActivityFactory.createMultiple(2).map(a => ({
+        ...a,
+        date: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000) // 3 days from now
+      }));
+      mockActivityService.getScheduledActivities.mockResolvedValue(scheduledActivities);
+      mockRequest.query = {};
+
+      // Act
+      await controller.getScheduledActivities(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockActivityService.getScheduledActivities).toHaveBeenCalledWith(7);
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: scheduledActivities
+      });
+    });
+
+    it('should handle custom days ahead parameter', async () => {
+      // Arrange
+      const scheduledActivities = ManagementActivityFactory.createMultiple(1);
+      mockActivityService.getScheduledActivities.mockResolvedValue(scheduledActivities);
+      mockRequest.query = { days: '14' };
+
+      // Act
+      await controller.getScheduledActivities(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockActivityService.getScheduledActivities).toHaveBeenCalledWith(14);
+    });
+
+    it('should handle service errors for scheduled activities', async () => {
+      // Arrange
+      const error = new Error('Failed to fetch scheduled activities');
+      mockActivityService.getScheduledActivities.mockRejectedValue(error);
+      mockRequest.query = {};
+
+      // Act
+      await controller.getScheduledActivities(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
+    });
+  });
+
+  describe('getPerformanceMetrics', () => {
+    it('should return performance metrics with filters', async () => {
+      // Arrange
+      const mockMetrics = {
+        totalActivities: 100,
+        averageActivitiesPerDay: 3.3,
+        performerEfficiency: {
+          'John Doe': 85,
+          'Jane Smith': 92
+        },
+        activityCompletionRate: 0.95,
+        timeToCompletion: {
+          average: 45,
+          median: 40
         }
-      ];
-
-      req.query = { days: '60' };
-      mockActivityService.getScheduledActivities.mockResolvedValue(activities);
-
-      await controller.getScheduledActivities(req, res);
-
-      expect(mockActivityService.getScheduledActivities).toHaveBeenCalledWith(60);
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
-        success: true,
-        data: activities
-      });
-    });
-  });
-
-  describe('getActivityMetrics', () => {
-    it('should get activity performance metrics', async () => {
-      const metrics = {
-        totalActivities: 500,
-        averageActivitiesPerDay: 5.5,
-        mostActivePerformer: 'John Doe',
-        mostCommonActivity: 'feeding',
-        efficiencyScore: 0.85
+      };
+      mockActivityService.getPerformanceMetrics.mockResolvedValue(mockMetrics);
+      mockRequest.query = {
+        startDate: '2024-01-01',
+        endDate: '2024-12-31',
+        activityType: 'feeding',
+        performer: 'John Doe'
       };
 
-      req.query = {
-        dateFrom: '2023-01-01',
-        dateTo: '2023-12-31',
-        performedBy: 'John Doe'
+      // Act
+      await controller.getPerformanceMetrics(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      const expectedFilters = {
+        startDate: new Date('2024-01-01'),
+        endDate: new Date('2024-12-31'),
+        activityType: 'feeding',
+        performer: 'John Doe'
       };
-      mockActivityService.getPerformanceMetrics.mockResolvedValue(metrics);
-
-      await controller.getActivityMetrics(req, res);
-
-      expect(mockActivityService.getPerformanceMetrics).toHaveBeenCalledWith({
-        dateFrom: '2023-01-01',
-        dateTo: '2023-12-31',
-        performedBy: 'John Doe'
-      });
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      expect(mockActivityService.getPerformanceMetrics).toHaveBeenCalledWith(expectedFilters);
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
-        data: metrics
+        data: mockMetrics
       });
     });
-  });
 
-  describe('Error Handling', () => {
-    it('should handle service errors', async () => {
-      const error = new Error('Service error');
-      mockActivityService.findAll.mockRejectedValue(error);
+    it('should handle empty filters', async () => {
+      // Arrange
+      const mockMetrics = {
+        totalActivities: 50,
+        averageActivitiesPerDay: 2.1
+      };
+      mockActivityService.getPerformanceMetrics.mockResolvedValue(mockMetrics);
+      mockRequest.query = {};
 
-      await expect(controller.listActivities(req, res)).rejects.toThrow(error);
+      // Act
+      await controller.getPerformanceMetrics(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockActivityService.getPerformanceMetrics).toHaveBeenCalledWith({});
     });
 
-    it('should handle API errors', async () => {
-      const apiError = ApiErrorClass.validation('Invalid data');
-      mockActivityService.create.mockRejectedValue(apiError);
+    it('should handle service errors for performance metrics', async () => {
+      // Arrange
+      const error = new Error('Failed to calculate performance metrics');
+      mockActivityService.getPerformanceMetrics.mockRejectedValue(error);
+      mockRequest.query = {};
 
-      req.validatedBody = { activityType: 'test' };
+      // Act
+      await controller.getPerformanceMetrics(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await expect(controller.createActivity(req, res)).rejects.toThrow(apiError);
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 });

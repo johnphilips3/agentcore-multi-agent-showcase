@@ -1,42 +1,21 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { AlpacaServiceImpl, AlpacaServiceError } from '../alpaca-service';
-import { AlpacaRepository, LineageTree } from '../../repositories';
-import { BreedingRepository } from '../../repositories';
-import { Alpaca, CreateAlpacaInput, UpdateAlpacaInput } from '../../models';
-
-// Mock repositories
-const mockAlpacaRepository: AlpacaRepository = {
-  create: vi.fn(),
-  findById: vi.fn(),
-  findAll: vi.fn(),
-  update: vi.fn(),
-  delete: vi.fn(),
-  findByRegistrationNumber: vi.fn(),
-  findByParent: vi.fn(),
-  findByGender: vi.fn(),
-  getLineage: vi.fn()
-};
-
-const mockBreedingRepository: BreedingRepository = {
-  create: vi.fn(),
-  findById: vi.fn(),
-  findAll: vi.fn(),
-  update: vi.fn(),
-  delete: vi.fn(),
-  findByParent: vi.fn(),
-  findByDateRange: vi.fn(),
-  checkInbreeding: vi.fn()
-};
+import { AlpacaService, HerdStatistics } from '../alpaca-service';
+import { PostgreSQLAlpacaRepository, QueryOptions, PaginatedResult } from '../../repositories/pg-alpaca-repository';
+import { Alpaca, CreateAlpacaInput, UpdateAlpacaInput } from '../../models/alpaca';
+import { AlpacaFactory } from '../../__tests__/data-factories';
+import { MockAlpacaRepositoryFactory } from '../../__tests__/mock-factories';
 
 describe('AlpacaService', () => {
-  let service: AlpacaServiceImpl;
+  let service: AlpacaService;
+  let mockRepository: ReturnType<typeof MockAlpacaRepositoryFactory.create>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    service = new AlpacaServiceImpl(mockAlpacaRepository, mockBreedingRepository);
+    mockRepository = MockAlpacaRepositoryFactory.create();
+    service = new AlpacaService(mockRepository as any);
   });
 
-  const mockAlpaca: Alpaca = {
+  const mockAlpaca = AlpacaFactory.create({
     id: 'alpaca-1',
     name: 'Test Alpaca',
     registrationNumber: 'REG001',
@@ -44,33 +23,19 @@ describe('AlpacaService', () => {
     gender: 'female',
     color: 'white',
     weight: 150,
-    height: 90,
-    createdAt: new Date(),
-    updatedAt: new Date()
+    height: 90
+  });
+
+  const mockPaginatedResult: PaginatedResult<Alpaca> = {
+    data: [mockAlpaca],
+    total: 1,
+    page: 1,
+    limit: 10,
+    totalPages: 1
   };
 
-  const mockSire: Alpaca = {
-    id: 'sire-1',
-    name: 'Test Sire',
-    birthDate: new Date('2018-01-01'),
-    gender: 'male',
-    color: 'brown',
-    createdAt: new Date(),
-    updatedAt: new Date()
-  };
-
-  const mockDam: Alpaca = {
-    id: 'dam-1',
-    name: 'Test Dam',
-    birthDate: new Date('2019-01-01'),
-    gender: 'female',
-    color: 'black',
-    createdAt: new Date(),
-    updatedAt: new Date()
-  };
-
-  describe('registerAlpaca', () => {
-    it('should successfully register a valid alpaca', async () => {
+  describe('createAlpaca', () => {
+    it('should successfully create a valid alpaca', async () => {
       const input: CreateAlpacaInput = {
         name: 'New Alpaca',
         birthDate: new Date('2022-01-01'),
@@ -78,67 +43,86 @@ describe('AlpacaService', () => {
         color: 'white'
       };
 
-      vi.mocked(mockAlpacaRepository.create).mockResolvedValue(mockAlpaca);
+      mockRepository.create.mockResolvedValue(mockAlpaca);
 
-      const result = await service.registerAlpaca(input);
+      const result = await service.createAlpaca(input);
 
-      expect(result.success).toBe(true);
-      expect(result.alpaca).toEqual(mockAlpaca);
-      expect(result.errors).toHaveLength(0);
-      expect(mockAlpacaRepository.create).toHaveBeenCalledWith(input);
+      expect(result).toEqual(mockAlpaca);
+      expect(mockRepository.create).toHaveBeenCalledWith(input);
     });
 
-    it('should fail registration with invalid input', async () => {
+    it('should throw error for empty name', async () => {
       const input: CreateAlpacaInput = {
-        name: '', // Invalid empty name
+        name: '',
         birthDate: new Date('2022-01-01'),
         gender: 'female',
         color: 'white'
       };
 
-      const result = await service.registerAlpaca(input);
-
-      expect(result.success).toBe(false);
-      expect(result.errors).toContain('Name is required and must be non-empty');
-      expect(mockAlpacaRepository.create).not.toHaveBeenCalled();
+      await expect(service.createAlpaca(input)).rejects.toThrow('Alpaca name is required');
+      expect(mockRepository.create).not.toHaveBeenCalled();
     });
 
-    it('should fail registration with duplicate registration number', async () => {
+    it('should throw error for whitespace-only name', async () => {
       const input: CreateAlpacaInput = {
-        name: 'New Alpaca',
-        registrationNumber: 'REG001',
+        name: '   ',
         birthDate: new Date('2022-01-01'),
         gender: 'female',
         color: 'white'
       };
 
-      vi.mocked(mockAlpacaRepository.findByRegistrationNumber).mockResolvedValue(mockAlpaca);
-
-      const result = await service.registerAlpaca(input);
-
-      expect(result.success).toBe(false);
-      expect(result.errors).toContain('Registration number already exists');
-      expect(mockAlpacaRepository.create).not.toHaveBeenCalled();
+      await expect(service.createAlpaca(input)).rejects.toThrow('Alpaca name is required');
+      expect(mockRepository.create).not.toHaveBeenCalled();
     });
 
-    it('should validate parent relationships during registration', async () => {
+    it('should throw error for missing birth date', async () => {
       const input: CreateAlpacaInput = {
-        name: 'New Alpaca',
-        birthDate: new Date('2022-01-01'),
+        name: 'Test Alpaca',
+        birthDate: undefined as any,
         gender: 'female',
-        color: 'white',
-        sireId: '550e8400-e29b-41d4-a716-446655440000' // Valid UUID format
+        color: 'white'
       };
 
-      vi.mocked(mockAlpacaRepository.findByRegistrationNumber).mockResolvedValue(null);
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(null);
+      await expect(service.createAlpaca(input)).rejects.toThrow('Birth date is required');
+      expect(mockRepository.create).not.toHaveBeenCalled();
+    });
 
-      const result = await service.registerAlpaca(input);
+    it('should throw error for invalid gender', async () => {
+      const input: CreateAlpacaInput = {
+        name: 'Test Alpaca',
+        birthDate: new Date('2022-01-01'),
+        gender: 'invalid' as any,
+        color: 'white'
+      };
 
-      expect(result.success).toBe(false);
-      expect(result.errors.length).toBeGreaterThan(0);
-      // Check that validation failed due to parent relationship issues
-      expect(result.errors.some(error => error.includes('Sire not found'))).toBe(true);
+      await expect(service.createAlpaca(input)).rejects.toThrow('Valid gender (male/female) is required');
+      expect(mockRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for empty color', async () => {
+      const input: CreateAlpacaInput = {
+        name: 'Test Alpaca',
+        birthDate: new Date('2022-01-01'),
+        gender: 'female',
+        color: ''
+      };
+
+      await expect(service.createAlpaca(input)).rejects.toThrow('Color is required');
+      expect(mockRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('should handle repository errors', async () => {
+      const input: CreateAlpacaInput = {
+        name: 'Test Alpaca',
+        birthDate: new Date('2022-01-01'),
+        gender: 'female',
+        color: 'white'
+      };
+
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.create.mockRejectedValue(repositoryError);
+
+      await expect(service.createAlpaca(input)).rejects.toThrow('Database connection failed');
     });
   });
 
@@ -149,238 +133,349 @@ describe('AlpacaService', () => {
         weight: 160
       };
 
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(mockAlpaca);
-      vi.mocked(mockAlpacaRepository.update).mockResolvedValue({ ...mockAlpaca, ...updates });
+      const updatedAlpaca = { ...mockAlpaca, ...updates };
+      mockRepository.update.mockResolvedValue(updatedAlpaca);
 
       const result = await service.updateAlpaca('alpaca-1', updates);
 
-      expect(result.name).toBe('Updated Name');
-      expect(result.weight).toBe(160);
-      expect(mockAlpacaRepository.update).toHaveBeenCalledWith('alpaca-1', updates);
+      expect(result).toEqual(updatedAlpaca);
+      expect(mockRepository.update).toHaveBeenCalledWith('alpaca-1', updates);
     });
 
-    it('should throw error when updating non-existent alpaca', async () => {
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(null);
+    it('should throw error for empty ID', async () => {
+      const updates: UpdateAlpacaInput = { name: 'New Name' };
 
-      await expect(service.updateAlpaca('invalid-id', { name: 'New Name' }))
-        .rejects.toThrow(AlpacaServiceError);
+      await expect(service.updateAlpaca('', updates)).rejects.toThrow('Alpaca ID is required');
+      expect(mockRepository.update).not.toHaveBeenCalled();
     });
 
-    it('should prevent duplicate registration numbers during update', async () => {
-      const updates: UpdateAlpacaInput = {
-        registrationNumber: 'REG002'
-      };
+    it('should throw error for whitespace-only ID', async () => {
+      const updates: UpdateAlpacaInput = { name: 'New Name' };
 
-      const existingAlpaca = { ...mockAlpaca, registrationNumber: 'REG001' };
-      const duplicateAlpaca = { ...mockAlpaca, id: 'other-id', registrationNumber: 'REG002' };
+      await expect(service.updateAlpaca('   ', updates)).rejects.toThrow('Alpaca ID is required');
+      expect(mockRepository.update).not.toHaveBeenCalled();
+    });
 
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(existingAlpaca);
-      vi.mocked(mockAlpacaRepository.findByRegistrationNumber).mockResolvedValue(duplicateAlpaca);
+    it('should throw error for empty name in updates', async () => {
+      const updates: UpdateAlpacaInput = { name: '' };
 
       await expect(service.updateAlpaca('alpaca-1', updates))
-        .rejects.toThrow('Registration number already exists');
+        .rejects.toThrow('Alpaca name cannot be empty');
+      expect(mockRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for whitespace-only name in updates', async () => {
+      const updates: UpdateAlpacaInput = { name: '   ' };
+
+      await expect(service.updateAlpaca('alpaca-1', updates))
+        .rejects.toThrow('Alpaca name cannot be empty');
+      expect(mockRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for invalid gender in updates', async () => {
+      const updates: UpdateAlpacaInput = { gender: 'invalid' as any };
+
+      await expect(service.updateAlpaca('alpaca-1', updates))
+        .rejects.toThrow('Valid gender (male/female) is required');
+      expect(mockRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for empty color in updates', async () => {
+      const updates: UpdateAlpacaInput = { color: '' };
+
+      await expect(service.updateAlpaca('alpaca-1', updates))
+        .rejects.toThrow('Color cannot be empty');
+      expect(mockRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('should allow undefined values in updates', async () => {
+      const updates: UpdateAlpacaInput = {
+        name: undefined,
+        gender: undefined,
+        color: undefined
+      };
+
+      const updatedAlpaca = { ...mockAlpaca };
+      mockRepository.update.mockResolvedValue(updatedAlpaca);
+
+      const result = await service.updateAlpaca('alpaca-1', updates);
+
+      expect(result).toEqual(updatedAlpaca);
+      expect(mockRepository.update).toHaveBeenCalledWith('alpaca-1', updates);
+    });
+
+    it('should handle repository errors', async () => {
+      const updates: UpdateAlpacaInput = { name: 'New Name' };
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.update.mockRejectedValue(repositoryError);
+
+      await expect(service.updateAlpaca('alpaca-1', updates))
+        .rejects.toThrow('Database connection failed');
+    });
+
+    it('should return null when alpaca not found', async () => {
+      const updates: UpdateAlpacaInput = { name: 'New Name' };
+      mockRepository.update.mockResolvedValue(null);
+
+      const result = await service.updateAlpaca('nonexistent-id', updates);
+
+      expect(result).toBeNull();
+      expect(mockRepository.update).toHaveBeenCalledWith('nonexistent-id', updates);
     });
   });
 
   describe('getAlpaca', () => {
     it('should return alpaca by ID', async () => {
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(mockAlpaca);
+      mockRepository.findById.mockResolvedValue(mockAlpaca);
 
       const result = await service.getAlpaca('alpaca-1');
 
       expect(result).toEqual(mockAlpaca);
-      expect(mockAlpacaRepository.findById).toHaveBeenCalledWith('alpaca-1');
+      expect(mockRepository.findById).toHaveBeenCalledWith('alpaca-1');
     });
 
     it('should return null for non-existent alpaca', async () => {
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(null);
+      mockRepository.findById.mockResolvedValue(null);
 
       const result = await service.getAlpaca('invalid-id');
 
       expect(result).toBeNull();
+      expect(mockRepository.findById).toHaveBeenCalledWith('invalid-id');
     });
-  });
 
-  describe('getAlpacaByRegistration', () => {
-    it('should return alpaca by registration number', async () => {
-      vi.mocked(mockAlpacaRepository.findByRegistrationNumber).mockResolvedValue(mockAlpaca);
+    it('should throw error for empty ID', async () => {
+      await expect(service.getAlpaca('')).rejects.toThrow('Alpaca ID is required');
+      expect(mockRepository.findById).not.toHaveBeenCalled();
+    });
 
-      const result = await service.getAlpacaByRegistration('REG001');
+    it('should throw error for whitespace-only ID', async () => {
+      await expect(service.getAlpaca('   ')).rejects.toThrow('Alpaca ID is required');
+      expect(mockRepository.findById).not.toHaveBeenCalled();
+    });
 
-      expect(result).toEqual(mockAlpaca);
-      expect(mockAlpacaRepository.findByRegistrationNumber).toHaveBeenCalledWith('REG001');
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.findById.mockRejectedValue(repositoryError);
+
+      await expect(service.getAlpaca('alpaca-1')).rejects.toThrow('Database connection failed');
     });
   });
 
   describe('getAllAlpacas', () => {
-    it('should return all alpacas', async () => {
-      const alpacas = [mockAlpaca];
-      vi.mocked(mockAlpacaRepository.findAll).mockResolvedValue(alpacas);
+    it('should return all alpacas with default options', async () => {
+      mockRepository.findAll.mockResolvedValue(mockPaginatedResult);
 
       const result = await service.getAllAlpacas();
 
-      expect(result).toEqual(alpacas);
-      expect(mockAlpacaRepository.findAll).toHaveBeenCalled();
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.findAll).toHaveBeenCalledWith({});
     });
 
     it('should pass query options to repository', async () => {
-      const options = { limit: 10, offset: 0 };
-      vi.mocked(mockAlpacaRepository.findAll).mockResolvedValue([]);
+      const options: QueryOptions = { limit: 10, offset: 0 };
+      mockRepository.findAll.mockResolvedValue(mockPaginatedResult);
 
-      await service.getAllAlpacas(options);
+      const result = await service.getAllAlpacas(options);
 
-      expect(mockAlpacaRepository.findAll).toHaveBeenCalledWith(options);
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.findAll).toHaveBeenCalledWith(options);
+    });
+
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.findAll.mockRejectedValue(repositoryError);
+
+      await expect(service.getAllAlpacas()).rejects.toThrow('Database connection failed');
     });
   });
 
   describe('getAlpacasByGender', () => {
-    it('should return alpacas by gender', async () => {
-      const femaleAlpacas = [mockAlpaca];
-      vi.mocked(mockAlpacaRepository.findByGender).mockResolvedValue(femaleAlpacas);
+    it('should return female alpacas', async () => {
+      const femaleResult: PaginatedResult<Alpaca> = {
+        data: [mockAlpaca],
+        total: 1,
+        page: 1,
+        limit: 10,
+        totalPages: 1
+      };
+      mockRepository.findByGender.mockResolvedValue(femaleResult);
 
       const result = await service.getAlpacasByGender('female');
 
-      expect(result).toEqual(femaleAlpacas);
-      expect(mockAlpacaRepository.findByGender).toHaveBeenCalledWith('female');
+      expect(result).toEqual(femaleResult);
+      expect(mockRepository.findByGender).toHaveBeenCalledWith('female', {});
     });
-  });
 
-  describe('getBreedingAgeAlpacas', () => {
-    it('should return breeding age alpacas', async () => {
-      const oldEnoughAlpaca: Alpaca = {
-        ...mockAlpaca,
-        birthDate: new Date('2020-01-01') // Over 18 months old
+    it('should return male alpacas', async () => {
+      const maleAlpaca = AlpacaFactory.create({ gender: 'male' });
+      const maleResult: PaginatedResult<Alpaca> = {
+        data: [maleAlpaca],
+        total: 1,
+        page: 1,
+        limit: 10,
+        totalPages: 1
       };
+      mockRepository.findByGender.mockResolvedValue(maleResult);
 
-      const tooYoungAlpaca: Alpaca = {
-        ...mockAlpaca,
-        id: 'young-alpaca',
-        birthDate: new Date() // Just born
+      const result = await service.getAlpacasByGender('male');
+
+      expect(result).toEqual(maleResult);
+      expect(mockRepository.findByGender).toHaveBeenCalledWith('male', {});
+    });
+
+    it('should pass query options to repository', async () => {
+      const options: QueryOptions = { limit: 5, offset: 10 };
+      const femaleResult: PaginatedResult<Alpaca> = {
+        data: [],
+        total: 0,
+        page: 3,
+        limit: 5,
+        totalPages: 0
       };
+      mockRepository.findByGender.mockResolvedValue(femaleResult);
 
-      vi.mocked(mockAlpacaRepository.findAll).mockResolvedValue([oldEnoughAlpaca, tooYoungAlpaca]);
+      const result = await service.getAlpacasByGender('female', options);
 
-      const result = await service.getBreedingAgeAlpacas();
-
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe(oldEnoughAlpaca.id);
+      expect(result).toEqual(femaleResult);
+      expect(mockRepository.findByGender).toHaveBeenCalledWith('female', options);
     });
 
-    it('should filter by gender when specified', async () => {
-      const femaleAlpacas = [mockAlpaca];
-      vi.mocked(mockAlpacaRepository.findByGender).mockResolvedValue(femaleAlpacas);
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.findByGender.mockRejectedValue(repositoryError);
 
-      await service.getBreedingAgeAlpacas('female');
-
-      expect(mockAlpacaRepository.findByGender).toHaveBeenCalledWith('female');
+      await expect(service.getAlpacasByGender('female')).rejects.toThrow('Database connection failed');
     });
   });
 
-  describe('getOffspring', () => {
-    it('should return offspring of a parent', async () => {
-      const offspring = [mockAlpaca];
-      vi.mocked(mockAlpacaRepository.findByParent).mockResolvedValue(offspring);
+  describe('deleteAlpaca', () => {
+    it('should successfully delete an alpaca', async () => {
+      mockRepository.delete.mockResolvedValue(true);
 
-      const result = await service.getOffspring('parent-id');
+      const result = await service.deleteAlpaca('alpaca-1');
 
-      expect(result).toEqual(offspring);
-      expect(mockAlpacaRepository.findByParent).toHaveBeenCalledWith('parent-id');
+      expect(result).toBe(true);
+      expect(mockRepository.delete).toHaveBeenCalledWith('alpaca-1');
+    });
+
+    it('should return false when alpaca not found', async () => {
+      mockRepository.delete.mockResolvedValue(false);
+
+      const result = await service.deleteAlpaca('nonexistent-id');
+
+      expect(result).toBe(false);
+      expect(mockRepository.delete).toHaveBeenCalledWith('nonexistent-id');
+    });
+
+    it('should throw error for empty ID', async () => {
+      await expect(service.deleteAlpaca('')).rejects.toThrow('Alpaca ID is required');
+      expect(mockRepository.delete).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for whitespace-only ID', async () => {
+      await expect(service.deleteAlpaca('   ')).rejects.toThrow('Alpaca ID is required');
+      expect(mockRepository.delete).not.toHaveBeenCalled();
+    });
+
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.delete.mockRejectedValue(repositoryError);
+
+      await expect(service.deleteAlpaca('alpaca-1')).rejects.toThrow('Database connection failed');
     });
   });
 
-  describe('getLineage', () => {
-    it('should return lineage tree', async () => {
-      const lineage: LineageTree = {
-        alpaca: mockAlpaca,
-        sire: { alpaca: mockSire },
-        dam: { alpaca: mockDam }
-      };
+  describe('searchAlpacas', () => {
+    it('should search alpacas with query', async () => {
+      const searchQuery = 'Test';
+      mockRepository.search.mockResolvedValue(mockPaginatedResult);
 
-      vi.mocked(mockAlpacaRepository.getLineage).mockResolvedValue(lineage);
+      const result = await service.searchAlpacas(searchQuery);
 
-      const result = await service.getLineage('alpaca-1', 3);
-
-      expect(result).toEqual(lineage);
-      expect(mockAlpacaRepository.getLineage).toHaveBeenCalledWith('alpaca-1', 3);
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.search).toHaveBeenCalledWith('Test', {});
     });
 
-    it('should validate generation limits', async () => {
-      await expect(service.getLineage('alpaca-1', 0))
-        .rejects.toThrow('Generations must be at least 1');
+    it('should return all alpacas for empty query', async () => {
+      mockRepository.findAll.mockResolvedValue(mockPaginatedResult);
 
-      await expect(service.getLineage('alpaca-1', 11))
-        .rejects.toThrow('Maximum 10 generations allowed');
-    });
-  });
+      const result = await service.searchAlpacas('');
 
-  describe('checkBreedingCompatibility', () => {
-    it('should return compatible for valid breeding pair', async () => {
-      const breedingAgeSire = { ...mockSire, birthDate: new Date('2020-01-01') };
-      const breedingAgeDam = { ...mockDam, birthDate: new Date('2020-06-01') };
-
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValueOnce(breedingAgeSire)
-        .mockResolvedValueOnce(breedingAgeDam);
-      vi.mocked(mockBreedingRepository.checkInbreeding).mockResolvedValue(false);
-
-      const result = await service.checkBreedingCompatibility('sire-1', 'dam-1');
-
-      expect(result.compatible).toBe(true);
-      expect(result.reasons).toHaveLength(0);
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.findAll).toHaveBeenCalledWith({});
+      expect(mockRepository.search).not.toHaveBeenCalled();
     });
 
-    it('should detect gender issues', async () => {
-      const femaleSire = { ...mockSire, gender: 'female' as const };
-      const maleDam = { ...mockDam, gender: 'male' as const };
+    it('should return all alpacas for whitespace-only query', async () => {
+      mockRepository.findAll.mockResolvedValue(mockPaginatedResult);
 
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValueOnce(femaleSire)
-        .mockResolvedValueOnce(maleDam);
+      const result = await service.searchAlpacas('   ');
 
-      const result = await service.checkBreedingCompatibility('sire-1', 'dam-1');
-
-      expect(result.compatible).toBe(false);
-      expect(result.reasons).toContain('Sire must be male');
-      expect(result.reasons).toContain('Dam must be female');
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.findAll).toHaveBeenCalledWith({});
+      expect(mockRepository.search).not.toHaveBeenCalled();
     });
 
-    it('should detect inbreeding', async () => {
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValueOnce(mockSire)
-        .mockResolvedValueOnce(mockDam);
-      vi.mocked(mockBreedingRepository.checkInbreeding).mockResolvedValue(true);
+    it('should trim search query', async () => {
+      const searchQuery = '  Test Alpaca  ';
+      mockRepository.search.mockResolvedValue(mockPaginatedResult);
 
-      const result = await service.checkBreedingCompatibility('sire-1', 'dam-1');
+      const result = await service.searchAlpacas(searchQuery);
 
-      expect(result.compatible).toBe(false);
-      expect(result.reasons).toContain('Breeding would result in inbreeding (close genetic relationship detected)');
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.search).toHaveBeenCalledWith('Test Alpaca', {});
     });
 
-    it('should provide age warnings', async () => {
-      const oldSire = { ...mockSire, birthDate: new Date('2005-01-01') }; // Very old
-      const youngDam = { ...mockDam, birthDate: new Date('2020-01-01') }; // Much younger
+    it('should pass query options to search', async () => {
+      const searchQuery = 'Test';
+      const options: QueryOptions = { limit: 5, offset: 10 };
+      mockRepository.search.mockResolvedValue(mockPaginatedResult);
 
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValueOnce(oldSire)
-        .mockResolvedValueOnce(youngDam);
-      vi.mocked(mockBreedingRepository.checkInbreeding).mockResolvedValue(false);
+      const result = await service.searchAlpacas(searchQuery, options);
 
-      const result = await service.checkBreedingCompatibility('sire-1', 'dam-1');
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.search).toHaveBeenCalledWith('Test', options);
+    });
 
-      expect(result.warnings).toContain('Sire is quite old (over 15 years)');
-      expect(result.warnings).toContain('Large age difference between sire and dam');
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.search.mockRejectedValue(repositoryError);
+
+      await expect(service.searchAlpacas('Test')).rejects.toThrow('Database connection failed');
     });
   });
 
   describe('getHerdStatistics', () => {
     it('should calculate correct herd statistics', async () => {
-      const alpacas: Alpaca[] = [
-        { ...mockAlpaca, gender: 'male', registrationNumber: 'REG001', birthDate: new Date('2020-01-01') },
-        { ...mockAlpaca, id: 'alpaca-2', gender: 'female', registrationNumber: 'REG002', birthDate: new Date('2021-01-01') },
-        { ...mockAlpaca, id: 'alpaca-3', gender: 'female', registrationNumber: undefined, birthDate: new Date('2022-01-01') }
+      const alpacas = [
+        AlpacaFactory.create({ 
+          gender: 'male', 
+          registrationNumber: 'REG001', 
+          birthDate: new Date('2020-01-01') 
+        }),
+        AlpacaFactory.create({ 
+          id: 'alpaca-2',
+          gender: 'female', 
+          registrationNumber: 'REG002', 
+          birthDate: new Date('2021-01-01') 
+        }),
+        AlpacaFactory.create({ 
+          id: 'alpaca-3',
+          gender: 'female', 
+          registrationNumber: undefined, 
+          birthDate: new Date('2022-01-01') 
+        })
       ];
 
-      vi.mocked(mockAlpacaRepository.findAll).mockResolvedValue(alpacas);
+      const paginatedAlpacas: PaginatedResult<Alpaca> = {
+        data: alpacas,
+        total: 3,
+        page: 1,
+        limit: 1000,
+        totalPages: 1
+      };
+
+      mockRepository.findAll.mockResolvedValue(paginatedAlpacas);
 
       const result = await service.getHerdStatistics();
 
@@ -389,80 +484,61 @@ describe('AlpacaService', () => {
       expect(result.femaleCount).toBe(2);
       expect(result.registeredCount).toBe(2);
       expect(result.averageAge).toBeGreaterThan(0);
-    });
-  });
-
-  describe('removeAlpaca', () => {
-    it('should successfully remove alpaca with no dependencies', async () => {
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(mockAlpaca);
-      vi.mocked(mockAlpacaRepository.findByParent).mockResolvedValue([]);
-      vi.mocked(mockBreedingRepository.findByParent).mockResolvedValue([]);
-      vi.mocked(mockAlpacaRepository.delete).mockResolvedValue(true);
-
-      const result = await service.removeAlpaca('alpaca-1');
-
-      expect(result).toBe(true);
-      expect(mockAlpacaRepository.delete).toHaveBeenCalledWith('alpaca-1');
+      expect(mockRepository.findAll).toHaveBeenCalledWith({ limit: 1000 });
     });
 
-    it('should prevent removal of alpaca with offspring', async () => {
-      const offspring = [{ ...mockAlpaca, id: 'offspring-1' }];
+    it('should handle empty herd', async () => {
+      const emptyResult: PaginatedResult<Alpaca> = {
+        data: [],
+        total: 0,
+        page: 1,
+        limit: 1000,
+        totalPages: 0
+      };
 
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(mockAlpaca);
-      vi.mocked(mockAlpacaRepository.findByParent).mockResolvedValue(offspring);
+      mockRepository.findAll.mockResolvedValue(emptyResult);
 
-      await expect(service.removeAlpaca('alpaca-1'))
-        .rejects.toThrow('Cannot remove alpaca that has offspring');
+      const result = await service.getHerdStatistics();
+
+      expect(result.totalCount).toBe(0);
+      expect(result.maleCount).toBe(0);
+      expect(result.femaleCount).toBe(0);
+      expect(result.registeredCount).toBe(0);
+      expect(result.averageAge).toBe(0);
     });
 
-    it('should return false for non-existent alpaca', async () => {
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(null);
+    it('should calculate average age correctly', async () => {
+      const now = new Date();
+      const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+      const twoYearsAgo = new Date(now.getFullYear() - 2, now.getMonth(), now.getDate());
 
-      const result = await service.removeAlpaca('invalid-id');
+      const alpacas = [
+        AlpacaFactory.create({ birthDate: oneYearAgo }),
+        AlpacaFactory.create({ birthDate: twoYearsAgo })
+      ];
 
-      expect(result).toBe(false);
-    });
-  });
+      const paginatedAlpacas: PaginatedResult<Alpaca> = {
+        data: alpacas,
+        total: 2,
+        page: 1,
+        limit: 1000,
+        totalPages: 1
+      };
 
-  describe('validateRelationships', () => {
-    it('should validate correct relationships', async () => {
-      vi.mocked(mockAlpacaRepository.findById)
-        .mockResolvedValueOnce(mockSire)
-        .mockResolvedValueOnce(mockDam);
-      vi.mocked(mockAlpacaRepository.findByParent).mockResolvedValue([]);
+      mockRepository.findAll.mockResolvedValue(paginatedAlpacas);
 
-      const result = await service.validateRelationships('alpaca-1', 'sire-1', 'dam-1');
+      const result = await service.getHerdStatistics();
 
-      expect(result.valid).toBe(true);
-      expect(result.errors).toHaveLength(0);
-    });
-
-    it('should detect circular references', async () => {
-      const result = await service.validateRelationships('alpaca-1', 'alpaca-1', undefined);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContain('Alpaca cannot be its own sire');
+      expect(result.averageAge).toBeCloseTo(1.5, 1); // Average of 1 and 2 years
     });
 
-    it('should detect invalid parent genders', async () => {
-      const femaleSire = { ...mockSire, gender: 'female' as const };
-
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(femaleSire);
-
-      const result = await service.validateRelationships('alpaca-1', 'sire-1', undefined);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContain('Sire must be male');
-    });
-  });
-
-  describe('error handling', () => {
-    it('should wrap repository errors in service errors', async () => {
+    it('should handle repository errors', async () => {
       const repositoryError = new Error('Database connection failed');
-      vi.mocked(mockAlpacaRepository.findById).mockRejectedValue(repositoryError);
+      mockRepository.findAll.mockRejectedValue(repositoryError);
 
-      await expect(service.getAlpaca('alpaca-1'))
-        .rejects.toThrow(AlpacaServiceError);
+      await expect(service.getHerdStatistics()).rejects.toThrow('Database connection failed');
     });
   });
+
+
 });

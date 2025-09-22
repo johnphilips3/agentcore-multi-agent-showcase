@@ -1,577 +1,957 @@
 /**
- * Breeding Controller Tests
- * Unit tests for the Breeding Records REST controller
+ * Unit tests for BreedingController
+ * Requirements: 3.1, 3.2, 3.3, 3.4
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { Request, Response } from 'express';
-import { BreedingController } from '../breeding-controller.js';
-import { BreedingService } from '../../../services/index.js';
-import { ApiErrorClass } from '../../errors.js';
-import { 
-  BreedingRecord, 
-  CreateBreedingRecordRequest, 
-  UpdateBreedingRecordRequest,
-  BreedingCompatibilityRequest,
-  BreedingCompatibilityResponse 
-} from '../../types.js';
+import { Request, Response, NextFunction } from 'express';
+import { BreedingController, ApiResponse } from '../breeding-controller';
+import { BreedingService } from '../../../services/breeding-service';
+import { BreedingRecordFactory } from '../../../__tests__/data-factories';
+import { MockServiceFactory } from '../../../__tests__/mock-factories';
+import { CreateBreedingRecordInput, UpdateBreedingRecordInput } from '../../../models/breeding-record';
 
-// Mock BreedingService
-const mockBreedingService = {
-  findAll: vi.fn(),
-  create: vi.fn(),
-  findById: vi.fn(),
-  update: vi.fn(),
-  delete: vi.fn(),
-  checkBreedingCompatibility: vi.fn(),
-  findBySire: vi.fn(),
-  findByDam: vi.fn(),
-  findByParent: vi.fn(),
-  findByDateRange: vi.fn(),
-  getBreedingStats: vi.fn(),
-  getBreedingRecommendations: vi.fn(),
-  getExpectedBirths: vi.fn(),
-  getBreedingHistory: vi.fn(),
-  getGeneticDiversityAnalysis: vi.fn(),
-  validateBreedingPair: vi.fn()
-} as any;
-
-// Mock request and response objects
-function createMockRequest(overrides: any = {}): any {
-  return {
-    params: {},
-    query: {},
-    body: {},
-    validatedBody: undefined,
-    validatedQuery: undefined,
-    pagination: { page: 1, limit: 20, offset: 0 },
-    ...overrides
-  };
-}
-
-function createMockResponse(): any {
-  const res = {
-    status: vi.fn().mockReturnThis(),
-    json: vi.fn().mockReturnThis(),
-    send: vi.fn().mockReturnThis()
-  };
-  return res;
-}
+// Mock the BreedingService
+vi.mock('../../../services/breeding-service');
 
 describe('BreedingController', () => {
   let controller: BreedingController;
-  let req: any;
-  let res: any;
+  let mockBreedingService: jest.Mocked<BreedingService>;
+  let mockRequest: Partial<Request>;
+  let mockResponse: Partial<Response>;
+  let mockNext: NextFunction;
 
   beforeEach(() => {
-    controller = new BreedingController(mockBreedingService);
-    req = createMockRequest();
-    res = createMockResponse();
     vi.clearAllMocks();
+    
+    // Create mock service
+    mockBreedingService = {
+      getAllBreedingRecords: vi.fn(),
+      createBreedingRecord: vi.fn(),
+      getBreedingRecord: vi.fn(),
+      updateBreedingRecord: vi.fn(),
+      deleteBreedingRecord: vi.fn(),
+      getBreedingRecordsBySire: vi.fn(),
+      getBreedingRecordsByDam: vi.fn(),
+      getBreedingRecordsByParent: vi.fn(),
+      getExpectedBirths: vi.fn(),
+      getBreedingStatistics: vi.fn(),
+      getBreedingRecordsByDateRange: vi.fn(),
+      validateBreedingPair: vi.fn()
+    } as any;
+
+    // Create controller instance
+    controller = new BreedingController(mockBreedingService);
+
+    // Create mock Express objects
+    mockRequest = MockServiceFactory.createMockRequest();
+    mockResponse = MockServiceFactory.createMockResponse();
+    mockNext = MockServiceFactory.createMockNext();
   });
 
-  describe('listBreedingRecords', () => {
-    it('should list breeding records with pagination', async () => {
-      const mockBreedingRecords = [
-        { 
-          id: '1', 
-          sireId: 'sire1', 
-          damId: 'dam1', 
-          breedingDate: '2023-01-01',
-          offspringIds: []
-        },
-        { 
-          id: '2', 
-          sireId: 'sire2', 
-          damId: 'dam2', 
-          breedingDate: '2023-01-02',
-          offspringIds: ['offspring1']
-        }
-      ];
-      
-      mockBreedingService.findAll.mockResolvedValue({
-        breedingRecords: mockBreedingRecords,
-        total: 2
-      });
-
-      await controller.listBreedingRecords(req, res);
-
-      expect(mockBreedingService.findAll).toHaveBeenCalledWith({
+  describe('getAllBreedingRecords', () => {
+    it('should return paginated breeding records with default pagination', async () => {
+      // Arrange
+      const mockRecords = BreedingRecordFactory.createMultiple(3);
+      const mockResult = {
+        data: mockRecords,
+        page: 1,
         limit: 20,
-        offset: 0
-      });
+        total: 3,
+        totalPages: 1
+      };
+      mockBreedingService.getAllBreedingRecords.mockResolvedValue(mockResult);
+      mockRequest.query = {};
 
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      // Act
+      await controller.getAllBreedingRecords(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockBreedingService.getAllBreedingRecords).toHaveBeenCalledWith({
+        limit: 20,
+        offset: 0,
+        sortBy: undefined,
+        sortOrder: 'desc'
+      });
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
-        data: mockBreedingRecords,
+        data: mockRecords,
         pagination: {
           page: 1,
           limit: 20,
-          total: 2,
+          total: 3,
           totalPages: 1
         }
       });
     });
 
-    it('should handle query parameters', async () => {
-      req.validatedQuery = {
-        sireId: 'sire1',
-        damId: 'dam1',
-        dateFrom: '2023-01-01',
-        dateTo: '2023-12-31'
+    it('should handle custom pagination and sorting parameters', async () => {
+      // Arrange
+      const mockRecords = BreedingRecordFactory.createMultiple(2);
+      const mockResult = {
+        data: mockRecords,
+        page: 2,
+        limit: 10,
+        total: 25,
+        totalPages: 3
+      };
+      mockBreedingService.getAllBreedingRecords.mockResolvedValue(mockResult);
+      mockRequest.query = {
+        page: '2',
+        limit: '10',
+        sortBy: 'breedingDate',
+        sortOrder: 'asc'
       };
 
-      mockBreedingService.findAll.mockResolvedValue({
-        breedingRecords: [],
-        total: 0
-      });
+      // Act
+      await controller.getAllBreedingRecords(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await controller.listBreedingRecords(req, res);
-
-      expect(mockBreedingService.findAll).toHaveBeenCalledWith({
-        sireId: 'sire1',
-        damId: 'dam1',
-        dateFrom: '2023-01-01',
-        dateTo: '2023-12-31',
-        limit: 20,
-        offset: 0
+      // Assert
+      expect(mockBreedingService.getAllBreedingRecords).toHaveBeenCalledWith({
+        limit: 10,
+        offset: 10,
+        sortBy: 'breedingDate',
+        sortOrder: 'asc'
       });
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: mockRecords,
+        pagination: {
+          page: mockResult.page,
+          limit: mockResult.limit,
+          total: mockResult.total,
+          totalPages: mockResult.totalPages
+        }
+      });
+    });
+
+    it('should handle service errors', async () => {
+      // Arrange
+      const error = new Error('Database connection failed');
+      mockBreedingService.getAllBreedingRecords.mockRejectedValue(error);
+      mockRequest.query = {};
+
+      // Act
+      await controller.getAllBreedingRecords(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
   describe('createBreedingRecord', () => {
-    it('should create a new breeding record', async () => {
-      const createRequest: CreateBreedingRecordRequest = {
-        sireId: 'sire1',
-        damId: 'dam1',
-        breedingDate: '2023-01-01',
-        expectedDueDate: '2023-12-01'
-      };
+    it('should create breeding record successfully', async () => {
+      // Arrange
+      const inputData = BreedingRecordFactory.createInput();
+      const createdRecord = BreedingRecordFactory.create(inputData);
+      mockBreedingService.createBreedingRecord.mockResolvedValue(createdRecord);
+      mockRequest.body = inputData;
 
-      const createdBreedingRecord: BreedingRecord = {
-        id: 'new-id',
-        ...createRequest,
-        offspringIds: [],
-        createdAt: '2023-01-01T00:00:00Z'
-      };
+      // Act
+      await controller.createBreedingRecord(mockRequest as Request, mockResponse as Response, mockNext);
 
-      req.validatedBody = createRequest;
-      mockBreedingService.create.mockResolvedValue(createdBreedingRecord);
-
-      await controller.createBreedingRecord(req, res);
-
-      expect(mockBreedingService.create).toHaveBeenCalledWith(createRequest);
-      expect(res.status).toHaveBeenCalledWith(201);
-      expect(res.json).toHaveBeenCalledWith({
+      // Assert
+      expect(mockBreedingService.createBreedingRecord).toHaveBeenCalledWith(inputData);
+      expect(mockResponse.status).toHaveBeenCalledWith(201);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
-        data: createdBreedingRecord
+        data: createdRecord
       });
+    });
+
+    it('should handle string date conversion', async () => {
+      // Arrange
+      const inputData = BreedingRecordFactory.createInput();
+      const inputWithStringDates = {
+        ...inputData,
+        breedingDate: '2024-01-01T00:00:00.000Z',
+        expectedDueDate: '2024-12-01T00:00:00.000Z',
+        actualBirthDate: '2024-12-05T00:00:00.000Z'
+      };
+      const createdRecord = BreedingRecordFactory.create(inputData);
+      mockBreedingService.createBreedingRecord.mockResolvedValue(createdRecord);
+      mockRequest.body = inputWithStringDates;
+
+      // Act
+      await controller.createBreedingRecord(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      const expectedInput = {
+        ...inputWithStringDates,
+        breedingDate: new Date('2024-01-01T00:00:00.000Z'),
+        expectedDueDate: new Date('2024-12-01T00:00:00.000Z'),
+        actualBirthDate: new Date('2024-12-05T00:00:00.000Z')
+      };
+      expect(mockBreedingService.createBreedingRecord).toHaveBeenCalledWith(expectedInput);
+    });
+
+    it('should handle partial date conversion', async () => {
+      // Arrange
+      const inputData = BreedingRecordFactory.createInput();
+      const inputWithPartialStringDates = {
+        ...inputData,
+        breedingDate: '2024-01-01T00:00:00.000Z',
+        expectedDueDate: undefined,
+        actualBirthDate: undefined
+      };
+      const createdRecord = BreedingRecordFactory.create(inputData);
+      mockBreedingService.createBreedingRecord.mockResolvedValue(createdRecord);
+      mockRequest.body = inputWithPartialStringDates;
+
+      // Act
+      await controller.createBreedingRecord(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      const expectedInput = {
+        ...inputWithPartialStringDates,
+        breedingDate: new Date('2024-01-01T00:00:00.000Z')
+      };
+      expect(mockBreedingService.createBreedingRecord).toHaveBeenCalledWith(expectedInput);
+    });
+
+    it('should handle service validation errors', async () => {
+      // Arrange
+      const inputData = BreedingRecordFactory.createInput();
+      const validationError = new Error('Invalid breeding record data');
+      mockBreedingService.createBreedingRecord.mockRejectedValue(validationError);
+      mockRequest.body = inputData;
+
+      // Act
+      await controller.createBreedingRecord(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(validationError);
     });
   });
 
   describe('getBreedingRecord', () => {
-    it('should get breeding record by ID', async () => {
-      const breedingRecord: BreedingRecord = {
-        id: 'test-id',
-        sireId: 'sire1',
-        damId: 'dam1',
-        breedingDate: '2023-01-01',
-        offspringIds: [],
-        createdAt: '2023-01-01T00:00:00Z'
-      };
+    it('should return breeding record when found', async () => {
+      // Arrange
+      const breedingRecord = BreedingRecordFactory.create();
+      mockBreedingService.getBreedingRecord.mockResolvedValue(breedingRecord);
+      mockRequest.params = { id: breedingRecord.id };
 
-      req.params = { id: 'test-id' };
-      mockBreedingService.findById.mockResolvedValue(breedingRecord);
+      // Act
+      await controller.getBreedingRecord(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await controller.getBreedingRecord(req, res);
-
-      expect(mockBreedingService.findById).toHaveBeenCalledWith('test-id');
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      // Assert
+      expect(mockBreedingService.getBreedingRecord).toHaveBeenCalledWith(breedingRecord.id);
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
         data: breedingRecord
       });
     });
 
-    it('should throw not found error when breeding record does not exist', async () => {
-      req.params = { id: 'non-existent-id' };
-      mockBreedingService.findById.mockResolvedValue(null);
+    it('should return 404 when breeding record not found', async () => {
+      // Arrange
+      const recordId = 'non-existent-id';
+      mockBreedingService.getBreedingRecord.mockResolvedValue(null);
+      mockRequest.params = { id: recordId };
 
-      await expect(controller.getBreedingRecord(req, res)).rejects.toThrow(ApiErrorClass);
-      
-      expect(mockBreedingService.findById).toHaveBeenCalledWith('non-existent-id');
+      // Act
+      await controller.getBreedingRecord(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockBreedingService.getBreedingRecord).toHaveBeenCalledWith(recordId);
+      expect(mockResponse.status).toHaveBeenCalledWith(404);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Breeding record not found'
+        }
+      });
+    });
+
+    it('should handle service errors', async () => {
+      // Arrange
+      const recordId = 'test-id';
+      const error = new Error('Database error');
+      mockBreedingService.getBreedingRecord.mockRejectedValue(error);
+      mockRequest.params = { id: recordId };
+
+      // Act
+      await controller.getBreedingRecord(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
   describe('updateBreedingRecord', () => {
-    it('should update breeding record', async () => {
-      const updateRequest: UpdateBreedingRecordRequest = {
-        actualBirthDate: '2023-11-15',
-        offspringIds: ['offspring1', 'offspring2']
-      };
+    it('should update breeding record successfully', async () => {
+      // Arrange
+      const recordId = 'test-id';
+      const updateData = BreedingRecordFactory.updateInput();
+      const updatedRecord = BreedingRecordFactory.create({ id: recordId, ...updateData });
+      mockBreedingService.updateBreedingRecord.mockResolvedValue(updatedRecord);
+      mockRequest.params = { id: recordId };
+      mockRequest.body = updateData;
 
-      const updatedBreedingRecord: BreedingRecord = {
-        id: 'test-id',
-        sireId: 'sire1',
-        damId: 'dam1',
-        breedingDate: '2023-01-01',
-        actualBirthDate: '2023-11-15',
-        offspringIds: ['offspring1', 'offspring2'],
-        createdAt: '2023-01-01T00:00:00Z'
-      };
+      // Act
+      await controller.updateBreedingRecord(mockRequest as Request, mockResponse as Response, mockNext);
 
-      req.params = { id: 'test-id' };
-      req.validatedBody = updateRequest;
-      mockBreedingService.update.mockResolvedValue(updatedBreedingRecord);
-
-      await controller.updateBreedingRecord(req, res);
-
-      expect(mockBreedingService.update).toHaveBeenCalledWith('test-id', updateRequest);
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      // Assert
+      expect(mockBreedingService.updateBreedingRecord).toHaveBeenCalledWith(recordId, updateData);
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
-        data: updatedBreedingRecord
+        data: updatedRecord
       });
+    });
+
+    it('should handle string date conversion in updates', async () => {
+      // Arrange
+      const recordId = 'test-id';
+      const updateData = {
+        ...BreedingRecordFactory.updateInput(),
+        breedingDate: '2024-01-01T00:00:00.000Z',
+        expectedDueDate: '2024-12-01T00:00:00.000Z',
+        actualBirthDate: '2024-12-05T00:00:00.000Z'
+      };
+      const updatedRecord = BreedingRecordFactory.create({ id: recordId });
+      mockBreedingService.updateBreedingRecord.mockResolvedValue(updatedRecord);
+      mockRequest.params = { id: recordId };
+      mockRequest.body = updateData;
+
+      // Act
+      await controller.updateBreedingRecord(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      const expectedUpdateData = {
+        ...updateData,
+        breedingDate: new Date('2024-01-01T00:00:00.000Z'),
+        expectedDueDate: new Date('2024-12-01T00:00:00.000Z'),
+        actualBirthDate: new Date('2024-12-05T00:00:00.000Z')
+      };
+      expect(mockBreedingService.updateBreedingRecord).toHaveBeenCalledWith(recordId, expectedUpdateData);
+    });
+
+    it('should return 404 when breeding record not found for update', async () => {
+      // Arrange
+      const recordId = 'non-existent-id';
+      const updateData = BreedingRecordFactory.updateInput();
+      mockBreedingService.updateBreedingRecord.mockResolvedValue(null);
+      mockRequest.params = { id: recordId };
+      mockRequest.body = updateData;
+
+      // Act
+      await controller.updateBreedingRecord(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(404);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Breeding record not found'
+        }
+      });
+    });
+
+    it('should handle service errors during update', async () => {
+      // Arrange
+      const recordId = 'test-id';
+      const updateData = BreedingRecordFactory.updateInput();
+      const error = new Error('Update failed');
+      mockBreedingService.updateBreedingRecord.mockRejectedValue(error);
+      mockRequest.params = { id: recordId };
+      mockRequest.body = updateData;
+
+      // Act
+      await controller.updateBreedingRecord(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
   describe('deleteBreedingRecord', () => {
-    it('should delete breeding record', async () => {
-      req.params = { id: 'test-id' };
-      mockBreedingService.delete.mockResolvedValue(true);
+    it('should delete breeding record successfully', async () => {
+      // Arrange
+      const recordId = 'test-id';
+      mockBreedingService.deleteBreedingRecord.mockResolvedValue(true);
+      mockRequest.params = { id: recordId };
 
-      await controller.deleteBreedingRecord(req, res);
+      // Act
+      await controller.deleteBreedingRecord(mockRequest as Request, mockResponse as Response, mockNext);
 
-      expect(mockBreedingService.delete).toHaveBeenCalledWith('test-id');
-      expect(res.status).toHaveBeenCalledWith(204);
-      expect(res.send).toHaveBeenCalled();
-    });
-
-    it('should throw not found error when breeding record does not exist', async () => {
-      req.params = { id: 'non-existent-id' };
-      mockBreedingService.delete.mockResolvedValue(false);
-
-      await expect(controller.deleteBreedingRecord(req, res)).rejects.toThrow(ApiErrorClass);
-      
-      expect(mockBreedingService.delete).toHaveBeenCalledWith('non-existent-id');
-    });
-  });
-
-  describe('checkBreedingCompatibility', () => {
-    it('should check breeding compatibility', async () => {
-      const compatibilityRequest: BreedingCompatibilityRequest = {
-        sireId: 'sire1',
-        damId: 'dam1'
-      };
-
-      const compatibilityResponse: BreedingCompatibilityResponse = {
-        compatible: true,
-        reason: undefined,
-        relationshipDegree: undefined
-      };
-
-      req.validatedBody = compatibilityRequest;
-      mockBreedingService.checkBreedingCompatibility.mockResolvedValue(compatibilityResponse);
-
-      await controller.checkBreedingCompatibility(req, res);
-
-      expect(mockBreedingService.checkBreedingCompatibility).toHaveBeenCalledWith('sire1', 'dam1');
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      // Assert
+      expect(mockBreedingService.deleteBreedingRecord).toHaveBeenCalledWith(recordId);
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
-        data: compatibilityResponse
+        data: { message: 'Breeding record deleted successfully' }
       });
     });
 
-    it('should return incompatible result with reason', async () => {
-      const compatibilityRequest: BreedingCompatibilityRequest = {
-        sireId: 'sire1',
-        damId: 'dam1'
-      };
+    it('should return 404 when breeding record not found for deletion', async () => {
+      // Arrange
+      const recordId = 'non-existent-id';
+      mockBreedingService.deleteBreedingRecord.mockResolvedValue(false);
+      mockRequest.params = { id: recordId };
 
-      const compatibilityResponse: BreedingCompatibilityResponse = {
-        compatible: false,
-        reason: 'Too closely related',
-        relationshipDegree: 2
-      };
+      // Act
+      await controller.deleteBreedingRecord(mockRequest as Request, mockResponse as Response, mockNext);
 
-      req.validatedBody = compatibilityRequest;
-      mockBreedingService.checkBreedingCompatibility.mockResolvedValue(compatibilityResponse);
-
-      await controller.checkBreedingCompatibility(req, res);
-
-      expect(res.json).toHaveBeenCalledWith({
-        success: true,
-        data: compatibilityResponse
-      });
-    });
-  });
-
-  describe('getAlpacaBreedingRecords', () => {
-    it('should get breeding records for alpaca as both sire and dam', async () => {
-      const breedingRecords = [
-        { 
-          id: '1', 
-          sireId: 'alpaca1', 
-          damId: 'dam1', 
-          breedingDate: '2023-01-01',
-          offspringIds: []
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(404);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Breeding record not found'
         }
-      ];
-
-      req.params = { id: 'alpaca1' };
-      req.query = { role: 'both' };
-      mockBreedingService.findByParent.mockResolvedValue(breedingRecords);
-
-      await controller.getAlpacaBreedingRecords(req, res);
-
-      expect(mockBreedingService.findByParent).toHaveBeenCalledWith('alpaca1');
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
-        success: true,
-        data: breedingRecords
       });
     });
 
-    it('should get breeding records for alpaca as sire only', async () => {
-      const breedingRecords = [];
+    it('should handle service errors during deletion', async () => {
+      // Arrange
+      const recordId = 'test-id';
+      const error = new Error('Deletion failed');
+      mockBreedingService.deleteBreedingRecord.mockRejectedValue(error);
+      mockRequest.params = { id: recordId };
 
-      req.params = { id: 'alpaca1' };
-      req.query = { role: 'sire' };
-      mockBreedingService.findBySire.mockResolvedValue(breedingRecords);
+      // Act
+      await controller.deleteBreedingRecord(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await controller.getAlpacaBreedingRecords(req, res);
-
-      expect(mockBreedingService.findBySire).toHaveBeenCalledWith('alpaca1');
-    });
-
-    it('should get breeding records for alpaca as dam only', async () => {
-      const breedingRecords = [];
-
-      req.params = { id: 'alpaca1' };
-      req.query = { role: 'dam' };
-      mockBreedingService.findByDam.mockResolvedValue(breedingRecords);
-
-      await controller.getAlpacaBreedingRecords(req, res);
-
-      expect(mockBreedingService.findByDam).toHaveBeenCalledWith('alpaca1');
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
-  describe('getBreedingRecordsByDateRange', () => {
-    it('should get breeding records by date range', async () => {
-      const breedingRecords = [
-        { 
-          id: '1', 
-          sireId: 'sire1', 
-          damId: 'dam1', 
-          breedingDate: '2023-06-01',
-          offspringIds: []
-        }
-      ];
-
-      req.query = {
-        dateFrom: '2023-01-01',
-        dateTo: '2023-12-31'
+  describe('getBreedingRecordsBySire', () => {
+    it('should return breeding records for specific sire', async () => {
+      // Arrange
+      const sireId = 'sire-123';
+      const mockRecords = BreedingRecordFactory.createMultiple(3, { sireId });
+      const mockResult = {
+        data: mockRecords,
+        page: 1,
+        limit: 20,
+        total: 3,
+        totalPages: 1
       };
-      mockBreedingService.findByDateRange.mockResolvedValue(breedingRecords);
+      mockBreedingService.getBreedingRecordsBySire.mockResolvedValue(mockResult);
+      mockRequest.params = { sireId };
+      mockRequest.query = {};
 
-      await controller.getBreedingRecordsByDateRange(req, res);
+      // Act
+      await controller.getBreedingRecordsBySire(mockRequest as Request, mockResponse as Response, mockNext);
 
-      expect(mockBreedingService.findByDateRange).toHaveBeenCalledWith('2023-01-01', '2023-12-31');
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      // Assert
+      expect(mockBreedingService.getBreedingRecordsBySire).toHaveBeenCalledWith(sireId, {
+        limit: 20,
+        offset: 0
+      });
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
-        data: breedingRecords
+        data: mockRecords,
+        pagination: {
+          page: mockResult.page,
+          limit: mockResult.limit,
+          total: mockResult.total,
+          totalPages: mockResult.totalPages
+        }
       });
     });
 
-    it('should require dateFrom and dateTo parameters', async () => {
-      req.query = { dateFrom: '2023-01-01' }; // Missing dateTo
-
-      await expect(controller.getBreedingRecordsByDateRange(req, res)).rejects.toThrow(ApiErrorClass);
-    });
-  });
-
-  describe('getAlpacaBreedingStats', () => {
-    it('should get breeding statistics for alpaca', async () => {
-      const stats = {
-        totalBreedings: 5,
-        successfulBreedings: 4,
-        totalOffspring: 8,
-        averageOffspringPerBreeding: 2,
-        lastBreedingDate: '2023-06-01',
-        nextExpectedBirth: '2024-01-01'
+    it('should handle pagination for sire breeding records', async () => {
+      // Arrange
+      const sireId = 'sire-123';
+      const mockResult = {
+        data: [],
+        page: 2,
+        limit: 10,
+        total: 25,
+        totalPages: 3
+      };
+      mockBreedingService.getBreedingRecordsBySire.mockResolvedValue(mockResult);
+      mockRequest.params = { sireId };
+      mockRequest.query = {
+        page: '2',
+        limit: '10'
       };
 
-      req.params = { id: 'alpaca1' };
-      mockBreedingService.getBreedingStats.mockResolvedValue(stats);
+      // Act
+      await controller.getBreedingRecordsBySire(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await controller.getAlpacaBreedingStats(req, res);
-
-      expect(mockBreedingService.getBreedingStats).toHaveBeenCalledWith('alpaca1');
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
-        success: true,
-        data: stats
+      // Assert
+      expect(mockBreedingService.getBreedingRecordsBySire).toHaveBeenCalledWith(sireId, {
+        limit: 10,
+        offset: 10
       });
+    });
+
+    it('should handle service errors for sire breeding records', async () => {
+      // Arrange
+      const sireId = 'sire-123';
+      const error = new Error('Failed to fetch sire breeding records');
+      mockBreedingService.getBreedingRecordsBySire.mockRejectedValue(error);
+      mockRequest.params = { sireId };
+      mockRequest.query = {};
+
+      // Act
+      await controller.getBreedingRecordsBySire(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
-  describe('getBreedingRecommendations', () => {
-    it('should get breeding recommendations for alpaca', async () => {
-      const recommendations = [
-        { 
-          alpacaId: 'candidate1', 
-          compatibilityScore: 0.95, 
-          reasons: ['Good genetic diversity', 'Complementary traits']
-        }
-      ];
+  describe('getBreedingRecordsByDam', () => {
+    it('should return breeding records for specific dam', async () => {
+      // Arrange
+      const damId = 'dam-123';
+      const mockRecords = BreedingRecordFactory.createMultiple(3, { damId });
+      const mockResult = {
+        data: mockRecords,
+        page: 1,
+        limit: 20,
+        total: 3,
+        totalPages: 1
+      };
+      mockBreedingService.getBreedingRecordsByDam.mockResolvedValue(mockResult);
+      mockRequest.params = { damId };
+      mockRequest.query = {};
 
-      req.params = { id: 'alpaca1' };
-      req.query = { gender: 'female' };
-      mockBreedingService.getBreedingRecommendations.mockResolvedValue(recommendations);
+      // Act
+      await controller.getBreedingRecordsByDam(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await controller.getBreedingRecommendations(req, res);
-
-      expect(mockBreedingService.getBreedingRecommendations).toHaveBeenCalledWith('alpaca1', 'female');
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
-        success: true,
-        data: recommendations
+      // Assert
+      expect(mockBreedingService.getBreedingRecordsByDam).toHaveBeenCalledWith(damId, {
+        limit: 20,
+        offset: 0
       });
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: mockRecords,
+        pagination: {
+          page: mockResult.page,
+          limit: mockResult.limit,
+          total: mockResult.total,
+          totalPages: mockResult.totalPages
+        }
+      });
+    });
+
+    it('should handle service errors for dam breeding records', async () => {
+      // Arrange
+      const damId = 'dam-123';
+      const error = new Error('Failed to fetch dam breeding records');
+      mockBreedingService.getBreedingRecordsByDam.mockRejectedValue(error);
+      mockRequest.params = { damId };
+      mockRequest.query = {};
+
+      // Act
+      await controller.getBreedingRecordsByDam(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
+    });
+  });
+
+  describe('getBreedingRecordsByParent', () => {
+    it('should return breeding records for specific parent', async () => {
+      // Arrange
+      const parentId = 'parent-123';
+      const mockRecords = BreedingRecordFactory.createMultiple(3);
+      const mockResult = {
+        data: mockRecords,
+        page: 1,
+        limit: 20,
+        total: 3,
+        totalPages: 1
+      };
+      mockBreedingService.getBreedingRecordsByParent.mockResolvedValue(mockResult);
+      mockRequest.params = { parentId };
+      mockRequest.query = {};
+
+      // Act
+      await controller.getBreedingRecordsByParent(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockBreedingService.getBreedingRecordsByParent).toHaveBeenCalledWith(parentId, {
+        limit: 20,
+        offset: 0
+      });
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: mockRecords,
+        pagination: {
+          page: mockResult.page,
+          limit: mockResult.limit,
+          total: mockResult.total,
+          totalPages: mockResult.totalPages
+        }
+      });
+    });
+
+    it('should handle service errors for parent breeding records', async () => {
+      // Arrange
+      const parentId = 'parent-123';
+      const error = new Error('Failed to fetch parent breeding records');
+      mockBreedingService.getBreedingRecordsByParent.mockRejectedValue(error);
+      mockRequest.params = { parentId };
+      mockRequest.query = {};
+
+      // Act
+      await controller.getBreedingRecordsByParent(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
   describe('getExpectedBirths', () => {
-    it('should get expected births with default days', async () => {
-      const expectedBirths = [
-        { 
-          id: '1', 
-          sireId: 'sire1', 
-          damId: 'dam1', 
-          expectedDueDate: '2023-12-15',
-          breedingDate: '2023-01-01'
-        }
-      ];
-
-      req.query = {};
+    it('should return expected births with default days ahead', async () => {
+      // Arrange
+      const expectedBirths = BreedingRecordFactory.createMultiple(2).map(r => ({
+        ...r,
+        expectedDueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000) // 15 days from now
+      }));
       mockBreedingService.getExpectedBirths.mockResolvedValue(expectedBirths);
+      mockRequest.query = {};
 
-      await controller.getExpectedBirths(req, res);
+      // Act
+      await controller.getExpectedBirths(mockRequest as Request, mockResponse as Response, mockNext);
 
-      expect(mockBreedingService.getExpectedBirths).toHaveBeenCalledWith(90);
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      // Assert
+      expect(mockBreedingService.getExpectedBirths).toHaveBeenCalledWith(30);
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
         data: expectedBirths
       });
     });
 
-    it('should get expected births with custom days', async () => {
-      const expectedBirths = [];
-
-      req.query = { days: '30' };
+    it('should handle custom days ahead parameter', async () => {
+      // Arrange
+      const expectedBirths = BreedingRecordFactory.createMultiple(1);
       mockBreedingService.getExpectedBirths.mockResolvedValue(expectedBirths);
+      mockRequest.query = { days: '60' };
 
-      await controller.getExpectedBirths(req, res);
+      // Act
+      await controller.getExpectedBirths(mockRequest as Request, mockResponse as Response, mockNext);
 
-      expect(mockBreedingService.getExpectedBirths).toHaveBeenCalledWith(30);
+      // Assert
+      expect(mockBreedingService.getExpectedBirths).toHaveBeenCalledWith(60);
+    });
+
+    it('should handle service errors for expected births', async () => {
+      // Arrange
+      const error = new Error('Failed to fetch expected births');
+      mockBreedingService.getExpectedBirths.mockRejectedValue(error);
+      mockRequest.query = {};
+
+      // Act
+      await controller.getExpectedBirths(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
-  describe('getAlpacaBreedingHistory', () => {
-    it('should get breeding history for alpaca', async () => {
-      const history = {
-        alpacaId: 'alpaca1',
-        totalBreedings: 3,
-        breedingRecords: [
-          { id: '1', breedingDate: '2023-01-01', offspring: ['child1'] }
-        ]
+  describe('getBreedingStatistics', () => {
+    it('should return breeding statistics', async () => {
+      // Arrange
+      const mockStats = {
+        totalBreedings: 25,
+        successfulBreedings: 20,
+        successRate: 0.8,
+        averageGestationPeriod: 335,
+        expectedBirths: 5
       };
+      mockBreedingService.getBreedingStatistics.mockResolvedValue(mockStats);
 
-      req.params = { id: 'alpaca1' };
-      mockBreedingService.getBreedingHistory.mockResolvedValue(history);
+      // Act
+      await controller.getBreedingStatistics(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await controller.getAlpacaBreedingHistory(req, res);
-
-      expect(mockBreedingService.getBreedingHistory).toHaveBeenCalledWith('alpaca1');
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      // Assert
+      expect(mockBreedingService.getBreedingStatistics).toHaveBeenCalled();
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
-        data: history
+        data: mockStats
       });
+    });
+
+    it('should handle service errors for breeding statistics', async () => {
+      // Arrange
+      const error = new Error('Failed to calculate breeding statistics');
+      mockBreedingService.getBreedingStatistics.mockRejectedValue(error);
+
+      // Act
+      await controller.getBreedingStatistics(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
-  describe('getGeneticDiversityAnalysis', () => {
-    it('should get genetic diversity analysis', async () => {
-      const analysis = {
-        totalAlpacas: 100,
-        uniqueLineages: 25,
-        diversityIndex: 0.85,
-        inbreedingRisk: 'Low',
-        recommendations: ['Introduce new bloodlines']
+  describe('getBreedingRecordsByDateRange', () => {
+    it('should return breeding records within date range', async () => {
+      // Arrange
+      const startDate = '2024-01-01';
+      const endDate = '2024-12-31';
+      const mockRecords = BreedingRecordFactory.createMultiple(3);
+      const mockResult = {
+        data: mockRecords,
+        page: 1,
+        limit: 20,
+        total: 3,
+        totalPages: 1
+      };
+      mockBreedingService.getBreedingRecordsByDateRange.mockResolvedValue(mockResult);
+      mockRequest.query = {
+        startDate,
+        endDate
       };
 
-      mockBreedingService.getGeneticDiversityAnalysis.mockResolvedValue(analysis);
+      // Act
+      await controller.getBreedingRecordsByDateRange(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await controller.getGeneticDiversityAnalysis(req, res);
-
-      expect(mockBreedingService.getGeneticDiversityAnalysis).toHaveBeenCalled();
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      // Assert
+      expect(mockBreedingService.getBreedingRecordsByDateRange).toHaveBeenCalledWith(
+        new Date(startDate),
+        new Date(endDate),
+        {
+          limit: 20,
+          offset: 0
+        }
+      );
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
-        data: analysis
+        data: mockRecords,
+        pagination: {
+          page: mockResult.page,
+          limit: mockResult.limit,
+          total: mockResult.total,
+          totalPages: mockResult.totalPages
+        }
       });
+    });
+
+    it('should return 400 when startDate is missing', async () => {
+      // Arrange
+      mockRequest.query = {
+        endDate: '2024-12-31'
+      };
+
+      // Act
+      await controller.getBreedingRecordsByDateRange(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(400);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'MISSING_PARAMETERS',
+          message: 'Both startDate and endDate are required'
+        }
+      });
+      expect(mockBreedingService.getBreedingRecordsByDateRange).not.toHaveBeenCalled();
+    });
+
+    it('should return 400 when endDate is missing', async () => {
+      // Arrange
+      mockRequest.query = {
+        startDate: '2024-01-01'
+      };
+
+      // Act
+      await controller.getBreedingRecordsByDateRange(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(400);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'MISSING_PARAMETERS',
+          message: 'Both startDate and endDate are required'
+        }
+      });
+    });
+
+    it('should return 400 for invalid date format', async () => {
+      // Arrange
+      mockRequest.query = {
+        startDate: 'invalid-date',
+        endDate: '2024-12-31'
+      };
+
+      // Act
+      await controller.getBreedingRecordsByDateRange(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(400);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'INVALID_DATE',
+          message: 'Invalid date format. Use YYYY-MM-DD'
+        }
+      });
+    });
+
+    it('should handle pagination with date range', async () => {
+      // Arrange
+      const startDate = '2024-01-01';
+      const endDate = '2024-12-31';
+      const mockResult = {
+        data: [],
+        page: 2,
+        limit: 10,
+        total: 25,
+        totalPages: 3
+      };
+      mockBreedingService.getBreedingRecordsByDateRange.mockResolvedValue(mockResult);
+      mockRequest.query = {
+        startDate,
+        endDate,
+        page: '2',
+        limit: '10'
+      };
+
+      // Act
+      await controller.getBreedingRecordsByDateRange(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockBreedingService.getBreedingRecordsByDateRange).toHaveBeenCalledWith(
+        new Date(startDate),
+        new Date(endDate),
+        {
+          limit: 10,
+          offset: 10
+        }
+      );
+    });
+
+    it('should handle service errors for date range query', async () => {
+      // Arrange
+      const error = new Error('Failed to fetch breeding records by date range');
+      mockBreedingService.getBreedingRecordsByDateRange.mockRejectedValue(error);
+      mockRequest.query = {
+        startDate: '2024-01-01',
+        endDate: '2024-12-31'
+      };
+
+      // Act
+      await controller.getBreedingRecordsByDateRange(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 
   describe('validateBreedingPair', () => {
-    it('should validate breeding pair with detailed report', async () => {
-      const validationRequest: BreedingCompatibilityRequest = {
-        sireId: 'sire1',
-        damId: 'dam1'
-      };
-
-      const validation = {
-        compatible: true,
-        geneticDiversity: 0.9,
+    it('should validate breeding pair successfully', async () => {
+      // Arrange
+      const sireId = 'sire-123';
+      const damId = 'dam-456';
+      const validationResult = {
+        isValid: true,
         inbreedingCoefficient: 0.05,
-        recommendations: ['Excellent genetic match'],
-        warnings: []
+        warnings: [],
+        recommendations: ['Good genetic match']
       };
+      mockBreedingService.validateBreedingPair.mockResolvedValue(validationResult);
+      mockRequest.body = { sireId, damId };
 
-      req.validatedBody = validationRequest;
-      mockBreedingService.validateBreedingPair.mockResolvedValue(validation);
+      // Act
+      await controller.validateBreedingPair(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await controller.validateBreedingPair(req, res);
-
-      expect(mockBreedingService.validateBreedingPair).toHaveBeenCalledWith('sire1', 'dam1');
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({
+      // Assert
+      expect(mockBreedingService.validateBreedingPair).toHaveBeenCalledWith(sireId, damId);
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
         success: true,
-        data: validation
+        data: validationResult
       });
     });
-  });
 
-  describe('Error Handling', () => {
-    it('should handle service errors', async () => {
-      const error = new Error('Service error');
-      mockBreedingService.findAll.mockRejectedValue(error);
+    it('should return 400 when sireId is missing', async () => {
+      // Arrange
+      mockRequest.body = { damId: 'dam-456' };
 
-      await expect(controller.listBreedingRecords(req, res)).rejects.toThrow(error);
+      // Act
+      await controller.validateBreedingPair(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(400);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'MISSING_PARAMETERS',
+          message: 'Both sireId and damId are required'
+        }
+      });
+      expect(mockBreedingService.validateBreedingPair).not.toHaveBeenCalled();
     });
 
-    it('should handle API errors', async () => {
-      const apiError = ApiErrorClass.validation('Invalid data');
-      mockBreedingService.create.mockRejectedValue(apiError);
+    it('should return 400 when damId is missing', async () => {
+      // Arrange
+      mockRequest.body = { sireId: 'sire-123' };
 
-      req.validatedBody = { sireId: 'test' };
+      // Act
+      await controller.validateBreedingPair(mockRequest as Request, mockResponse as Response, mockNext);
 
-      await expect(controller.createBreedingRecord(req, res)).rejects.toThrow(apiError);
+      // Assert
+      expect(mockResponse.status).toHaveBeenCalledWith(400);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'MISSING_PARAMETERS',
+          message: 'Both sireId and damId are required'
+        }
+      });
+    });
+
+    it('should handle validation with warnings', async () => {
+      // Arrange
+      const sireId = 'sire-123';
+      const damId = 'dam-456';
+      const validationResult = {
+        isValid: true,
+        inbreedingCoefficient: 0.15,
+        warnings: ['High inbreeding coefficient'],
+        recommendations: ['Consider alternative breeding pairs']
+      };
+      mockBreedingService.validateBreedingPair.mockResolvedValue(validationResult);
+      mockRequest.body = { sireId, damId };
+
+      // Act
+      await controller.validateBreedingPair(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockBreedingService.validateBreedingPair).toHaveBeenCalledWith(sireId, damId);
+      expect(mockResponse.status).toHaveBeenCalledWith(200);
+      expect(mockResponse.json).toHaveBeenCalledWith({
+        success: true,
+        data: validationResult
+      });
+    });
+
+    it('should handle service errors for breeding pair validation', async () => {
+      // Arrange
+      const sireId = 'sire-123';
+      const damId = 'dam-456';
+      const error = new Error('Failed to validate breeding pair');
+      mockBreedingService.validateBreedingPair.mockRejectedValue(error);
+      mockRequest.body = { sireId, damId };
+
+      // Act
+      await controller.validateBreedingPair(mockRequest as Request, mockResponse as Response, mockNext);
+
+      // Assert
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
   });
 });

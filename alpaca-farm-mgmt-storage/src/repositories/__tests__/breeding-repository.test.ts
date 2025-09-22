@@ -1,78 +1,187 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { BreedingRepositoryImpl } from '../breeding-repository';
-import { BreedingRecord } from '../../models';
-import { DatabaseConnection } from '../../database/connection';
+/**
+ * Unit tests for PostgreSQLBreedingRepository
+ * Requirements: 5.1, 5.2, 5.3, 5.4
+ */
 
-// Mock database connection
-const mockConnection: DatabaseConnection = {
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { PostgreSQLBreedingRepository, QueryOptions, PaginatedResult } from '../pg-breeding-repository';
+import { BreedingRecord, CreateBreedingRecordInput, UpdateBreedingRecordInput } from '../../models/breeding-record';
+import { PostgreSQLConnection } from '../../database/pg-connection';
+import { BreedingRecordFactory } from '../../__tests__/data-factories';
+import { MockUtils, TestEnvironment } from '../../__tests__/test-utils';
+
+// Mock PostgreSQL connection and client
+const mockClient = {
   query: vi.fn(),
-  execute: vi.fn(),
+  release: vi.fn()
+};
+
+const mockConnection: PostgreSQLConnection = {
+  query: vi.fn(),
+  getClient: vi.fn().mockResolvedValue(mockClient),
   close: vi.fn(),
   isConnected: vi.fn().mockReturnValue(true)
 };
 
-// Mock connection manager
-vi.mock('../../database/connection', async () => {
-  const actual = await vi.importActual('../../database/connection');
-  return {
-    ...actual,
-    getConnectionManager: vi.fn(() => ({
-      getConnection: vi.fn().mockResolvedValue(mockConnection)
-    }))
-  };
-});
-
-describe('BreedingRepositoryImpl', () => {
-  let repository: BreedingRepositoryImpl;
+describe('PostgreSQLBreedingRepository', () => {
+  let repository: PostgreSQLBreedingRepository;
   let mockQuery: any;
-  let mockExecute: any;
+  let mockGetClient: any;
+  let mockClientQuery: any;
 
   const mockBreedingRecordRow = {
-    id: 'breeding-1',
-    sire_id: 'sire-1',
-    dam_id: 'dam-1',
-    breeding_date: '2023-01-01T00:00:00.000Z',
-    expected_due_date: '2023-12-01T00:00:00.000Z',
-    actual_birth_date: '2023-11-30T00:00:00.000Z',
-    offspring_ids: '["offspring-1", "offspring-2"]',
-    notes: 'Successful breeding',
-    created_at: '2023-01-01T00:00:00.000Z',
-    updated_at: '2023-01-01T00:00:00.000Z'
+    id: 'test-breeding-1',
+    sire_id: 'test-sire-1',
+    dam_id: 'test-dam-1',
+    breeding_date: '2024-01-01T00:00:00.000Z',
+    expected_due_date: '2024-12-01T00:00:00.000Z',
+    actual_birth_date: null,
+    notes: 'Test breeding record',
+    created_at: '2024-01-01T00:00:00.000Z',
+    offspring_ids: ['offspring-1', 'offspring-2']
   };
 
-  const mockBreedingRecord: BreedingRecord = {
-    id: 'breeding-1',
-    sireId: 'sire-1',
-    damId: 'dam-1',
-    breedingDate: new Date('2023-01-01T00:00:00.000Z'),
-    expectedDueDate: new Date('2023-12-01T00:00:00.000Z'),
-    actualBirthDate: new Date('2023-11-30T00:00:00.000Z'),
+  const mockBreedingRecord: BreedingRecord = BreedingRecordFactory.create({
+    id: 'test-breeding-1',
+    sireId: 'test-sire-1',
+    damId: 'test-dam-1',
+    breedingDate: new Date('2024-01-01T00:00:00.000Z'),
+    expectedDueDate: new Date('2024-12-01T00:00:00.000Z'),
+    actualBirthDate: undefined,
     offspringIds: ['offspring-1', 'offspring-2'],
-    notes: 'Successful breeding',
-    createdAt: new Date('2023-01-01T00:00:00.000Z'),
-    updatedAt: new Date('2023-01-01T00:00:00.000Z')
-  };
+    notes: 'Test breeding record',
+    createdAt: new Date('2024-01-01T00:00:00.000Z'),
+    updatedAt: new Date('2024-01-01T00:00:00.000Z')
+  });
 
   beforeEach(() => {
-    repository = new BreedingRepositoryImpl();
-    mockQuery = vi.mocked(mockConnection.query);
-    mockExecute = vi.mocked(mockConnection.execute);
+    TestEnvironment.setupTestEnv();
     
-    mockQuery.mockReset();
-    mockExecute.mockReset();
+    // Reset all mocks
+    vi.clearAllMocks();
+    
+    // Ensure getClient returns the mockClient
+    mockConnection.getClient = vi.fn().mockResolvedValue(mockClient);
+    
+    repository = new PostgreSQLBreedingRepository(mockConnection);
+    mockQuery = vi.mocked(mockConnection.query);
+    mockGetClient = vi.mocked(mockConnection.getClient);
+    mockClientQuery = vi.mocked(mockClient.query);
+    
+    MockUtils.clearAllMocks();
   });
 
   afterEach(() => {
-    vi.clearAllMocks();
+    TestEnvironment.cleanupTestEnv();
+    MockUtils.restoreAllMocks();
   });
 
-  describe('mapRowToEntity', () => {
-    it('should map database row to breeding record entity correctly', async () => {
-      mockQuery.mockResolvedValue([mockBreedingRecordRow]);
+  describe('create', () => {
+    it('should create breeding record with offspring relationships', async () => {
+      const createInput: CreateBreedingRecordInput = BreedingRecordFactory.createInput({
+        offspringIds: ['offspring-1', 'offspring-2']
+      });
 
-      const result = await repository.findById('breeding-1');
+      mockClientQuery
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({ rows: [mockBreedingRecordRow] }) // INSERT breeding record
+        .mockResolvedValueOnce({}) // INSERT offspring relationship 1
+        .mockResolvedValueOnce({}) // INSERT offspring relationship 2
+        .mockResolvedValueOnce({}); // COMMIT
+
+      const result = await repository.create(createInput);
 
       expect(result).toEqual(mockBreedingRecord);
+      expect(mockClientQuery).toHaveBeenCalledWith('BEGIN');
+      // Check that the INSERT query was called with correct parameters
+      const insertCalls = mockClientQuery.mock.calls.filter(call => 
+        call[0] && call[0].includes('INSERT INTO breeding_records')
+      );
+      expect(insertCalls).toHaveLength(1);
+      expect(insertCalls[0][1]).toEqual([
+        createInput.sireId,
+        createInput.damId,
+        createInput.breedingDate,
+        createInput.expectedDueDate,
+        null, // actualBirthDate is converted from undefined to null
+        createInput.notes
+      ]);
+      expect(mockClientQuery).toHaveBeenCalledWith('COMMIT');
+      expect(mockClient.release).toHaveBeenCalled();
+    });
+
+    it('should create breeding record without offspring', async () => {
+      const createInput: CreateBreedingRecordInput = BreedingRecordFactory.createInput({
+        offspringIds: []
+      });
+
+      const recordWithoutOffspring = { ...mockBreedingRecordRow, offspring_ids: [] };
+      mockClientQuery
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({ rows: [recordWithoutOffspring] }) // INSERT breeding record
+        .mockResolvedValueOnce({}); // COMMIT
+
+      const result = await repository.create(createInput);
+
+      expect(result.offspringIds).toEqual([]);
+      expect(mockClientQuery).toHaveBeenCalledWith('BEGIN');
+      expect(mockClientQuery).toHaveBeenCalledWith('COMMIT');
+    });
+
+    it('should rollback transaction on error', async () => {
+      const createInput = BreedingRecordFactory.createInput();
+      mockClientQuery
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockRejectedValueOnce(new Error('Database error')); // INSERT fails
+
+      await expect(repository.create(createInput)).rejects.toThrow('Database error');
+
+      expect(mockClientQuery).toHaveBeenCalledWith('BEGIN');
+      expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
+      expect(mockClient.release).toHaveBeenCalled();
+    });
+  });
+
+  describe('findById', () => {
+    it('should find breeding record by id with offspring', async () => {
+      mockQuery.mockResolvedValue({ rows: [mockBreedingRecordRow] });
+
+      const result = await repository.findById('test-breeding-1');
+
+      expect(result).toEqual(mockBreedingRecord);
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('SELECT br.*'),
+        ['test-breeding-1']
+      );
+    });
+
+    it('should return null when breeding record not found', async () => {
+      mockQuery.mockResolvedValue({ rows: [] });
+
+      const result = await repository.findById('nonexistent-id');
+
+      expect(result).toBeNull();
+    });
+
+    it('should handle database errors', async () => {
+      mockQuery.mockRejectedValue(new Error('Database connection failed'));
+
+      await expect(repository.findById('test-breeding-1')).rejects.toThrow('Database connection failed');
+    });
+
+    it('should map row to breeding record entity correctly', async () => {
+      mockQuery.mockResolvedValue({ rows: [mockBreedingRecordRow] });
+
+      const result = await repository.findById('test-breeding-1');
+
+      expect(result?.id).toBe('test-breeding-1');
+      expect(result?.sireId).toBe('test-sire-1');
+      expect(result?.damId).toBe('test-dam-1');
+      expect(result?.breedingDate).toEqual(new Date('2024-01-01T00:00:00.000Z'));
+      expect(result?.expectedDueDate).toEqual(new Date('2024-12-01T00:00:00.000Z'));
+      expect(result?.actualBirthDate).toBeUndefined();
+      expect(result?.offspringIds).toEqual(['offspring-1', 'offspring-2']);
+      expect(result?.notes).toBe('Test breeding record');
     });
 
     it('should handle missing optional fields', async () => {
@@ -80,359 +189,612 @@ describe('BreedingRepositoryImpl', () => {
         ...mockBreedingRecordRow,
         expected_due_date: null,
         actual_birth_date: null,
-        offspring_ids: null,
-        notes: null
+        notes: null,
+        offspring_ids: null
       };
 
-      mockQuery.mockResolvedValue([rowWithoutOptionals]);
+      mockQuery.mockResolvedValue({ rows: [rowWithoutOptionals] });
 
-      const result = await repository.findById('breeding-1');
+      const result = await repository.findById('test-breeding-1');
 
       expect(result?.expectedDueDate).toBeUndefined();
       expect(result?.actualBirthDate).toBeUndefined();
-      expect(result?.offspringIds).toEqual([]);
       expect(result?.notes).toBeNull();
-    });
-
-    it('should handle invalid JSON in offspring_ids', async () => {
-      const rowWithInvalidJson = {
-        ...mockBreedingRecordRow,
-        offspring_ids: 'invalid-json'
-      };
-
-      mockQuery.mockResolvedValue([rowWithInvalidJson]);
-
-      const result = await repository.findById('breeding-1');
-
       expect(result?.offspringIds).toEqual([]);
     });
   });
 
-  describe('findByParent', () => {
-    it('should find breeding records by parent id', async () => {
-      const breeding1 = { ...mockBreedingRecordRow, id: 'breeding-1', sire_id: 'parent-1' };
-      const breeding2 = { ...mockBreedingRecordRow, id: 'breeding-2', dam_id: 'parent-1' };
+  describe('findAll', () => {
+    it('should find all breeding records with default pagination', async () => {
+      const breedingRecordRows = [mockBreedingRecordRow, { ...mockBreedingRecordRow, id: 'breeding-2' }];
       
-      mockQuery.mockResolvedValue([breeding1, breeding2]);
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ count: '2' }] }) // count query
+        .mockResolvedValueOnce({ rows: breedingRecordRows }); // data query
 
-      const result = await repository.findByParent('parent-1');
+      const result = await repository.findAll();
 
-      expect(result).toHaveLength(2);
-      expect(result[0].id).toBe('breeding-1');
-      expect(result[1].id).toBe('breeding-2');
+      expect(result.data).toHaveLength(2);
+      expect(result.total).toBe(2);
+      expect(result.page).toBe(1);
+      expect(result.limit).toBe(20);
+      expect(result.totalPages).toBe(1);
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+    });
+
+    it('should handle custom pagination options', async () => {
+      const options: QueryOptions = { limit: 5, offset: 10 };
+      
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ count: '25' }] })
+        .mockResolvedValueOnce({ rows: [mockBreedingRecordRow] });
+
+      const result = await repository.findAll(options);
+
+      expect(result.page).toBe(3); // offset 10 / limit 5 + 1
+      expect(result.limit).toBe(5);
+      expect(result.total).toBe(25);
+      expect(result.totalPages).toBe(5);
       expect(mockQuery).toHaveBeenCalledWith(
-        'SELECT * FROM breeding_records WHERE sire_id = $1 OR dam_id = $1 ORDER BY breeding_date DESC',
-        ['parent-1']
+        expect.stringContaining('LIMIT $1 OFFSET $2'),
+        [5, 10]
       );
     });
 
-    it('should return empty array when no records found', async () => {
-      mockQuery.mockResolvedValue([]);
+    it('should handle sorting options', async () => {
+      const options: QueryOptions = { sortBy: 'breeding_date', sortOrder: 'asc' };
+      
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ count: '1' }] })
+        .mockResolvedValueOnce({ rows: [mockBreedingRecordRow] });
 
-      const result = await repository.findByParent('parent-1');
+      await repository.findAll(options);
 
-      expect(result).toEqual([]);
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('ORDER BY br.breeding_date ASC'),
+        [20, 0]
+      );
     });
 
-    it('should throw RepositoryError on database error', async () => {
-      mockQuery.mockRejectedValue(new Error('Database error'));
+    it('should use default sorting for invalid sort fields', async () => {
+      const options: QueryOptions = { sortBy: 'invalid_field' };
+      
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ count: '1' }] })
+        .mockResolvedValueOnce({ rows: [mockBreedingRecordRow] });
 
-      await expect(repository.findByParent('parent-1'))
-        .rejects.toThrow('Failed to find breeding records by parent');
+      await repository.findAll(options);
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('ORDER BY br.breeding_date DESC, br.created_at DESC'),
+        [20, 0]
+      );
+    });
+
+    it('should handle database errors', async () => {
+      mockQuery.mockRejectedValue(new Error('Database connection failed'));
+
+      await expect(repository.findAll()).rejects.toThrow('Database connection failed');
+    });
+  });
+
+  describe('update', () => {
+    it('should update breeding record with offspring relationships', async () => {
+      const updateInput: UpdateBreedingRecordInput = {
+        notes: 'Updated breeding notes',
+        offspringIds: ['new-offspring-1', 'new-offspring-2']
+      };
+      
+      const updatedRow = { ...mockBreedingRecordRow, notes: 'Updated breeding notes' };
+      
+      mockClientQuery
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({ rows: [updatedRow] }) // UPDATE breeding record
+        .mockResolvedValueOnce({}) // DELETE old offspring relationships
+        .mockResolvedValueOnce({}) // INSERT new offspring relationship 1
+        .mockResolvedValueOnce({}) // INSERT new offspring relationship 2
+        .mockResolvedValueOnce({}); // COMMIT
+
+      // Mock the offspring query for final result
+      mockQuery.mockResolvedValueOnce({ 
+        rows: [
+          { offspring_id: 'new-offspring-1' },
+          { offspring_id: 'new-offspring-2' }
+        ]
+      });
+
+      const result = await repository.update('test-breeding-1', updateInput);
+
+      expect(result?.notes).toBe('Updated breeding notes');
+      expect(mockClientQuery).toHaveBeenCalledWith('BEGIN');
+      expect(mockClientQuery).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE breeding_records'),
+        expect.arrayContaining(['Updated breeding notes', 'test-breeding-1'])
+      );
+      expect(mockClientQuery).toHaveBeenCalledWith('COMMIT');
+      expect(mockClient.release).toHaveBeenCalled();
+    });
+
+    it('should return existing record when no fields to update', async () => {
+      const updateInput: UpdateBreedingRecordInput = {};
+      
+      mockClientQuery
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({ rows: [mockBreedingRecordRow] }) // SELECT existing record
+        .mockResolvedValueOnce({}); // COMMIT
+
+      mockQuery.mockResolvedValueOnce({ 
+        rows: [
+          { offspring_id: 'offspring-1' },
+          { offspring_id: 'offspring-2' }
+        ]
+      });
+
+      const result = await repository.update('test-breeding-1', updateInput);
+
+      expect(result).toEqual(mockBreedingRecord);
+    });
+
+    it('should return null when breeding record not found', async () => {
+      const updateInput: UpdateBreedingRecordInput = { notes: 'Updated notes' };
+      
+      mockClientQuery
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({ rows: [] }) // UPDATE returns no rows
+        .mockResolvedValueOnce({}); // ROLLBACK
+
+      const result = await repository.update('nonexistent-id', updateInput);
+
+      expect(result).toBeNull();
+      expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
+    });
+
+    it('should rollback transaction on error', async () => {
+      const updateInput: UpdateBreedingRecordInput = { notes: 'Updated notes' };
+      
+      mockClientQuery
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockRejectedValueOnce(new Error('Database error')); // UPDATE fails
+
+      await expect(repository.update('test-breeding-1', updateInput)).rejects.toThrow('Database error');
+
+      expect(mockClientQuery).toHaveBeenCalledWith('BEGIN');
+      expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
+      expect(mockClient.release).toHaveBeenCalled();
+    });
+  });
+
+  describe('delete', () => {
+    it('should delete breeding record successfully', async () => {
+      mockQuery.mockResolvedValue({ rowCount: 1 });
+
+      const result = await repository.delete('test-breeding-1');
+
+      expect(result).toBe(true);
+      expect(mockQuery).toHaveBeenCalledWith(
+        'DELETE FROM breeding_records WHERE id = $1',
+        ['test-breeding-1']
+      );
+    });
+
+    it('should return false when breeding record not found', async () => {
+      mockQuery.mockResolvedValue({ rowCount: 0 });
+
+      const result = await repository.delete('nonexistent-id');
+
+      expect(result).toBe(false);
+    });
+
+    it('should handle database errors', async () => {
+      mockQuery.mockRejectedValue(new Error('Database connection failed'));
+
+      await expect(repository.delete('test-breeding-1')).rejects.toThrow('Database connection failed');
+    });
+  });
+
+  describe('findBySire', () => {
+    it('should find breeding records by sire id', async () => {
+      const breedingRecords = [mockBreedingRecordRow, { ...mockBreedingRecordRow, id: 'breeding-2' }];
+      
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ count: '2' }] })
+        .mockResolvedValueOnce({ rows: breedingRecords });
+
+      const result = await repository.findBySire('test-sire-1');
+
+      expect(result.data).toHaveLength(2);
+      expect(result.total).toBe(2);
+      expect(mockQuery).toHaveBeenCalledWith(
+        'SELECT COUNT(*) FROM breeding_records WHERE sire_id = $1',
+        ['test-sire-1']
+      );
+    });
+
+    it('should handle empty results', async () => {
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ count: '0' }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const result = await repository.findBySire('test-sire-1');
+
+      expect(result.data).toHaveLength(0);
+      expect(result.total).toBe(0);
+    });
+
+    it('should handle database errors', async () => {
+      mockQuery.mockRejectedValue(new Error('Database connection failed'));
+
+      await expect(repository.findBySire('test-sire-1')).rejects.toThrow('Database connection failed');
+    });
+  });
+
+  describe('findByDam', () => {
+    it('should find breeding records by dam id', async () => {
+      const breedingRecords = [mockBreedingRecordRow, { ...mockBreedingRecordRow, id: 'breeding-2' }];
+      
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ count: '2' }] })
+        .mockResolvedValueOnce({ rows: breedingRecords });
+
+      const result = await repository.findByDam('test-dam-1');
+
+      expect(result.data).toHaveLength(2);
+      expect(result.total).toBe(2);
+      expect(mockQuery).toHaveBeenCalledWith(
+        'SELECT COUNT(*) FROM breeding_records WHERE dam_id = $1',
+        ['test-dam-1']
+      );
+    });
+
+    it('should handle empty results', async () => {
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ count: '0' }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const result = await repository.findByDam('test-dam-1');
+
+      expect(result.data).toHaveLength(0);
+      expect(result.total).toBe(0);
+    });
+
+    it('should handle database errors', async () => {
+      mockQuery.mockRejectedValue(new Error('Database connection failed'));
+
+      await expect(repository.findByDam('test-dam-1')).rejects.toThrow('Database connection failed');
+    });
+  });
+
+  describe('findByParent', () => {
+    it('should find breeding records by parent field and id', async () => {
+      const breedingRecords = [mockBreedingRecordRow];
+      
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ count: '1' }] })
+        .mockResolvedValueOnce({ rows: breedingRecords });
+
+      const result = await repository.findByParent('sire_id', 'test-sire-1');
+
+      expect(result.data).toHaveLength(1);
+      expect(result.total).toBe(1);
+      expect(mockQuery).toHaveBeenCalledWith(
+        'SELECT COUNT(*) FROM breeding_records WHERE sire_id = $1',
+        ['test-sire-1']
+      );
+    });
+
+    it('should handle dam_id field', async () => {
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ count: '0' }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      await repository.findByParent('dam_id', 'test-dam-1');
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        'SELECT COUNT(*) FROM breeding_records WHERE dam_id = $1',
+        ['test-dam-1']
+      );
+    });
+
+    it('should handle database errors', async () => {
+      mockQuery.mockRejectedValue(new Error('Database connection failed'));
+
+      await expect(repository.findByParent('sire_id', 'test-sire-1')).rejects.toThrow('Database connection failed');
     });
   });
 
   describe('findByDateRange', () => {
     it('should find breeding records within date range', async () => {
-      const breeding1 = { ...mockBreedingRecordRow, id: 'breeding-1', breeding_date: '2023-01-15T00:00:00.000Z' };
-      const breeding2 = { ...mockBreedingRecordRow, id: 'breeding-2', breeding_date: '2023-02-15T00:00:00.000Z' };
+      const breedingRecords = [
+        { ...mockBreedingRecordRow, id: 'breeding-1', breeding_date: '2024-01-15T00:00:00.000Z' },
+        { ...mockBreedingRecordRow, id: 'breeding-2', breeding_date: '2024-02-15T00:00:00.000Z' }
+      ];
       
-      mockQuery.mockResolvedValue([breeding1, breeding2]);
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ count: '2' }] })
+        .mockResolvedValueOnce({ rows: breedingRecords });
 
-      const startDate = new Date('2023-01-01');
-      const endDate = new Date('2023-02-28');
+      const startDate = new Date('2024-01-01');
+      const endDate = new Date('2024-02-28');
       const result = await repository.findByDateRange(startDate, endDate);
 
-      expect(result).toHaveLength(2);
+      expect(result.data).toHaveLength(2);
+      expect(result.total).toBe(2);
       expect(mockQuery).toHaveBeenCalledWith(
-        'SELECT * FROM breeding_records WHERE breeding_date BETWEEN $1 AND $2 ORDER BY breeding_date DESC',
-        [startDate.toISOString(), endDate.toISOString()]
+        'SELECT COUNT(*) FROM breeding_records WHERE breeding_date BETWEEN $1 AND $2',
+        [startDate, endDate]
+      );
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('WHERE br.breeding_date BETWEEN $1 AND $2'),
+        [startDate, endDate, 20, 0]
       );
     });
 
-    it('should return empty array when no records in range', async () => {
-      mockQuery.mockResolvedValue([]);
+    it('should handle empty results', async () => {
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ count: '0' }] })
+        .mockResolvedValueOnce({ rows: [] });
 
-      const startDate = new Date('2023-01-01');
-      const endDate = new Date('2023-01-31');
+      const startDate = new Date('2024-01-01');
+      const endDate = new Date('2024-01-31');
       const result = await repository.findByDateRange(startDate, endDate);
+
+      expect(result.data).toHaveLength(0);
+      expect(result.total).toBe(0);
+    });
+
+    it('should handle database errors', async () => {
+      mockQuery.mockRejectedValue(new Error('Database connection failed'));
+
+      const startDate = new Date('2024-01-01');
+      const endDate = new Date('2024-01-31');
+      await expect(repository.findByDateRange(startDate, endDate)).rejects.toThrow('Database connection failed');
+    });
+  });
+
+  describe('getExpectedBirths', () => {
+    it('should find expected births within specified days', async () => {
+      const expectedBirthRecords = [
+        { ...mockBreedingRecordRow, id: 'breeding-1', expected_due_date: '2024-02-01T00:00:00.000Z', actual_birth_date: null },
+        { ...mockBreedingRecordRow, id: 'breeding-2', expected_due_date: '2024-02-15T00:00:00.000Z', actual_birth_date: null }
+      ];
+      
+      mockQuery.mockResolvedValue({ rows: expectedBirthRecords });
+
+      const result = await repository.getExpectedBirths(30);
+
+      expect(result).toHaveLength(2);
+      expect(result[0].id).toBe('breeding-1');
+      expect(result[1].id).toBe('breeding-2');
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('WHERE br.expected_due_date IS NOT NULL'),
+        [expect.any(Date)]
+      );
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('AND br.actual_birth_date IS NULL'),
+        [expect.any(Date)]
+      );
+    });
+
+    it('should use default 30 days when no parameter provided', async () => {
+      mockQuery.mockResolvedValue({ rows: [] });
+
+      await repository.getExpectedBirths();
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('AND br.expected_due_date BETWEEN CURRENT_DATE AND $1'),
+        [expect.any(Date)]
+      );
+    });
+
+    it('should handle empty results', async () => {
+      mockQuery.mockResolvedValue({ rows: [] });
+
+      const result = await repository.getExpectedBirths(30);
 
       expect(result).toEqual([]);
     });
 
-    it('should throw RepositoryError on database error', async () => {
-      mockQuery.mockRejectedValue(new Error('Database error'));
+    it('should handle database errors', async () => {
+      mockQuery.mockRejectedValue(new Error('Database connection failed'));
 
-      const startDate = new Date('2023-01-01');
-      const endDate = new Date('2023-01-31');
-      await expect(repository.findByDateRange(startDate, endDate))
-        .rejects.toThrow('Failed to find breeding records by date range');
+      await expect(repository.getExpectedBirths(30)).rejects.toThrow('Database connection failed');
     });
   });
 
-  describe('checkInbreeding', () => {
-    it('should return true for direct parent-child relationship', async () => {
-      mockQuery
-        .mockResolvedValueOnce([{ count: 1 }]) // Direct relationship found
-        .mockResolvedValueOnce([{ count: 0 }]) // No sibling relationship
-        .mockResolvedValueOnce([{ count: 0 }]); // No grandparent relationship
+  describe('mapRowToBreedingRecord', () => {
+    it('should map database row to breeding record entity correctly', async () => {
+      mockQuery.mockResolvedValue({ rows: [mockBreedingRecordRow] });
 
-      const result = await repository.checkInbreeding('sire-1', 'dam-1');
+      const result = await repository.findById('test-breeding-1');
 
-      expect(result).toBe(true);
-      expect(mockQuery).toHaveBeenCalledWith(
-        expect.stringContaining('SELECT COUNT(*) as count FROM alpacas'),
-        ['sire-1', 'dam-1']
-      );
+      expect(result).toEqual(mockBreedingRecord);
     });
 
-    it('should return true for sibling relationship', async () => {
-      mockQuery
-        .mockResolvedValueOnce([{ count: 0 }]) // No direct relationship
-        .mockResolvedValueOnce([{ count: 1 }]) // Sibling relationship found
-        .mockResolvedValueOnce([{ count: 0 }]); // No grandparent relationship
+    it('should handle null values correctly', async () => {
+      const rowWithNulls = {
+        ...mockBreedingRecordRow,
+        expected_due_date: null,
+        actual_birth_date: null,
+        notes: null,
+        offspring_ids: null
+      };
 
-      const result = await repository.checkInbreeding('sire-1', 'dam-1');
+      mockQuery.mockResolvedValue({ rows: [rowWithNulls] });
 
-      expect(result).toBe(true);
+      const result = await repository.findById('test-breeding-1');
+
+      expect(result?.expectedDueDate).toBeUndefined();
+      expect(result?.actualBirthDate).toBeUndefined();
+      expect(result?.notes).toBeNull();
+      expect(result?.offspringIds).toEqual([]);
     });
 
-    it('should return true for grandparent-grandchild relationship', async () => {
-      mockQuery
-        .mockResolvedValueOnce([{ count: 0 }]) // No direct relationship
-        .mockResolvedValueOnce([{ count: 0 }]) // No sibling relationship
-        .mockResolvedValueOnce([{ count: 1 }]); // Grandparent relationship found
+    it('should parse dates correctly', async () => {
+      const rowWithDates = {
+        ...mockBreedingRecordRow,
+        breeding_date: '2024-01-15T10:30:00.000Z',
+        expected_due_date: '2024-12-15T10:30:00.000Z',
+        actual_birth_date: '2024-12-10T08:00:00.000Z',
+        created_at: '2024-01-01T08:00:00.000Z'
+      };
 
-      const result = await repository.checkInbreeding('sire-1', 'dam-1');
+      mockQuery.mockResolvedValue({ rows: [rowWithDates] });
 
-      expect(result).toBe(true);
+      const result = await repository.findById('test-breeding-1');
+
+      expect(result?.breedingDate).toEqual(new Date('2024-01-15T10:30:00.000Z'));
+      expect(result?.expectedDueDate).toEqual(new Date('2024-12-15T10:30:00.000Z'));
+      expect(result?.actualBirthDate).toEqual(new Date('2024-12-10T08:00:00.000Z'));
+      expect(result?.createdAt).toEqual(new Date('2024-01-01T08:00:00.000Z'));
     });
 
-    it('should return false when no inbreeding detected', async () => {
-      mockQuery
-        .mockResolvedValueOnce([{ count: 0 }]) // No direct relationship
-        .mockResolvedValueOnce([{ count: 0 }]) // No sibling relationship
-        .mockResolvedValueOnce([{ count: 0 }]); // No grandparent relationship
+    it('should filter null offspring ids', async () => {
+      const rowWithNullOffspring = {
+        ...mockBreedingRecordRow,
+        offspring_ids: ['offspring-1', null, 'offspring-2', null]
+      };
 
-      const result = await repository.checkInbreeding('sire-1', 'dam-1');
+      mockQuery.mockResolvedValue({ rows: [rowWithNullOffspring] });
 
-      expect(result).toBe(false);
-    });
+      const result = await repository.findById('test-breeding-1');
 
-    it('should throw RepositoryError on database error', async () => {
-      mockQuery.mockRejectedValue(new Error('Database error'));
-
-      await expect(repository.checkInbreeding('sire-1', 'dam-1'))
-        .rejects.toThrow('Failed to check inbreeding');
+      expect(result?.offspringIds).toEqual(['offspring-1', 'offspring-2']);
     });
   });
 
-  describe('create with offspring relationships', () => {
-    it('should create breeding record and handle offspring relationships', async () => {
-      const createData = {
-        sireId: 'sire-1',
-        damId: 'dam-1',
-        breedingDate: new Date('2023-01-01'),
-        offspringIds: ['offspring-1', 'offspring-2']
-      };
-
-      // Mock the create call from parent class
-      mockQuery.mockResolvedValue([{
-        id: 'new-breeding-id',
-        sire_id: 'sire-1',
-        dam_id: 'dam-1',
-        breeding_date: '2023-01-01T00:00:00.000Z',
-        expected_due_date: null,
-        actual_birth_date: null,
-        offspring_ids: '["offspring-1", "offspring-2"]',
-        notes: null,
-        created_at: '2023-01-01T00:00:00.000Z',
-        updated_at: '2023-01-01T00:00:00.000Z'
-      }]);
-
-      mockExecute.mockResolvedValue({ changes: 1 });
-
-      const result = await repository.create(createData);
-
-      expect(result.sireId).toBe('sire-1');
-      expect(result.damId).toBe('dam-1');
-      expect(result.offspringIds).toEqual(['offspring-1', 'offspring-2']);
-
-      // Verify offspring relationships were created
-      expect(mockExecute).toHaveBeenCalledWith(
-        'INSERT INTO breeding_offspring (breeding_id, offspring_id) VALUES ($1, $2)',
-        ['new-breeding-id', 'offspring-1']
-      );
-      expect(mockExecute).toHaveBeenCalledWith(
-        'INSERT INTO breeding_offspring (breeding_id, offspring_id) VALUES ($1, $2)',
-        ['new-breeding-id', 'offspring-2']
-      );
-    });
-
-    it('should create breeding record without offspring relationships', async () => {
-      const createData = {
-        sireId: 'sire-1',
-        damId: 'dam-1',
-        breedingDate: new Date('2023-01-01'),
-        offspringIds: []
-      };
-
-      mockQuery.mockResolvedValue([{
-        id: 'new-breeding-id',
-        sire_id: 'sire-1',
-        dam_id: 'dam-1',
-        breeding_date: '2023-01-01T00:00:00.000Z',
-        expected_due_date: null,
-        actual_birth_date: null,
-        offspring_ids: '[]',
-        notes: null,
-        created_at: '2023-01-01T00:00:00.000Z',
-        updated_at: '2023-01-01T00:00:00.000Z'
-      }]);
-
-      const result = await repository.create(createData);
-
-      expect(result.offspringIds).toEqual([]);
-      // Should not call execute for offspring relationships
-      expect(mockExecute).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('update with offspring relationships', () => {
-    it('should update breeding record and handle offspring relationships', async () => {
-      const existingRecord = {
-        id: 'breeding-1',
-        sire_id: 'sire-1',
-        dam_id: 'dam-1',
-        breeding_date: '2023-01-01T00:00:00.000Z',
-        expected_due_date: null,
-        actual_birth_date: null,
-        offspring_ids: '["old-offspring"]',
-        notes: null,
-        created_at: '2023-01-01T00:00:00.000Z',
-        updated_at: '2023-01-01T00:00:00.000Z'
-      };
-
-      const updatedRecord = {
-        ...existingRecord,
-        offspring_ids: '["new-offspring-1", "new-offspring-2"]',
-        updated_at: '2023-01-01T01:00:00.000Z'
-      };
-
-      // Mock findById call
-      mockQuery.mockResolvedValueOnce([existingRecord]);
-      // Mock update call
-      mockQuery.mockResolvedValueOnce([updatedRecord]);
-
-      mockExecute.mockResolvedValue({ changes: 1 });
-
-      const result = await repository.update('breeding-1', {
-        offspringIds: ['new-offspring-1', 'new-offspring-2']
+  describe('SQL parameter binding', () => {
+    it('should properly bind parameters in create query', async () => {
+      const createInput = BreedingRecordFactory.createInput({
+        sireId: 'test-sire-1',
+        damId: 'test-dam-1',
+        breedingDate: new Date('2024-01-01'),
+        expectedDueDate: new Date('2024-12-01'),
+        actualBirthDate: undefined,
+        notes: 'Test breeding',
+        offspringIds: ['offspring-1']
       });
 
-      expect(result.offspringIds).toEqual(['new-offspring-1', 'new-offspring-2']);
+      mockClientQuery
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({ rows: [mockBreedingRecordRow] }) // INSERT
+        .mockResolvedValueOnce({}) // INSERT offspring
+        .mockResolvedValueOnce({}); // COMMIT
 
-      // Verify old relationships were deleted
-      expect(mockExecute).toHaveBeenCalledWith(
-        'DELETE FROM breeding_offspring WHERE breeding_id = $1',
-        ['breeding-1']
-      );
+      await repository.create(createInput);
 
-      // Verify new relationships were created
-      expect(mockExecute).toHaveBeenCalledWith(
-        'INSERT INTO breeding_offspring (breeding_id, offspring_id) VALUES ($1, $2)',
-        ['breeding-1', 'new-offspring-1']
+      expect(mockClientQuery).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO breeding_records'),
+        [
+          'test-sire-1',
+          'test-dam-1',
+          createInput.breedingDate,
+          createInput.expectedDueDate,
+          null, // actualBirthDate is converted from undefined to null
+          'Test breeding'
+        ]
       );
-      expect(mockExecute).toHaveBeenCalledWith(
-        'INSERT INTO breeding_offspring (breeding_id, offspring_id) VALUES ($1, $2)',
-        ['breeding-1', 'new-offspring-2']
+    });
+
+    it('should handle null parameters in create query', async () => {
+      const minimalInput: CreateBreedingRecordInput = {
+        sireId: 'test-sire-1',
+        damId: 'test-dam-1',
+        breedingDate: new Date('2024-01-01')
+      };
+
+      mockClientQuery
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({ rows: [mockBreedingRecordRow] }) // INSERT
+        .mockResolvedValueOnce({}); // COMMIT
+
+      await repository.create(minimalInput);
+
+      expect(mockClientQuery).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO breeding_records'),
+        [
+          'test-sire-1',
+          'test-dam-1',
+          minimalInput.breedingDate,
+          null, // expectedDueDate
+          null, // actualBirthDate
+          null  // notes
+        ]
       );
     });
   });
 
-  describe('mapEntityToRow', () => {
-    it('should map entity to database row correctly', async () => {
-      const createData = {
-        sireId: 'sire-2',
-        damId: 'dam-2',
-        breedingDate: new Date('2023-03-01'),
-        expectedDueDate: new Date('2024-02-01'),
-        offspringIds: ['offspring-3'],
-        notes: 'Test breeding'
-      };
-
-      const mockResult = [{
-        id: 'new-breeding-id',
-        sire_id: 'sire-2',
-        dam_id: 'dam-2',
-        breeding_date: '2023-03-01T00:00:00.000Z',
-        expected_due_date: '2024-02-01T00:00:00.000Z',
-        actual_birth_date: null,
-        offspring_ids: '["offspring-3"]',
-        notes: 'Test breeding',
-        created_at: '2023-01-01T00:00:00.000Z',
-        updated_at: '2023-01-01T00:00:00.000Z'
-      }];
-
-      mockQuery.mockResolvedValue(mockResult);
-      mockExecute.mockResolvedValue({ changes: 1 });
-
-      const result = await repository.create(createData);
-
-      expect(result.sireId).toBe('sire-2');
-      expect(result.damId).toBe('dam-2');
-      expect(result.expectedDueDate).toEqual(new Date('2024-02-01T00:00:00.000Z'));
-      expect(result.offspringIds).toEqual(['offspring-3']);
-      expect(result.notes).toBe('Test breeding');
+  describe('transaction management', () => {
+    it('should handle successful transactions', async () => {
+      const createInput = BreedingRecordFactory.createInput();
       
-      // Verify the SQL call includes the mapped fields
-      expect(mockQuery).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO breeding_records'),
-        expect.arrayContaining(['sire-2', 'dam-2'])
-      );
+      mockClientQuery
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({ rows: [mockBreedingRecordRow] }) // INSERT
+        .mockResolvedValueOnce({}); // COMMIT
+
+      await repository.create(createInput);
+
+      expect(mockClientQuery).toHaveBeenCalledWith('BEGIN');
+      expect(mockClientQuery).toHaveBeenCalledWith('COMMIT');
+      expect(mockClient.release).toHaveBeenCalled();
     });
 
-    it('should handle undefined optional fields', async () => {
-      const createData = {
-        sireId: 'sire-3',
-        damId: 'dam-3',
-        breedingDate: new Date('2023-03-01'),
-        offspringIds: []
-      };
+    it('should rollback on transaction failure', async () => {
+      const createInput = BreedingRecordFactory.createInput();
+      
+      mockClientQuery
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockRejectedValueOnce(new Error('Transaction failed')); // INSERT fails
 
-      const mockResult = [{
-        id: 'simple-breeding-id',
-        sire_id: 'sire-3',
-        dam_id: 'dam-3',
-        breeding_date: '2023-03-01T00:00:00.000Z',
-        expected_due_date: null,
-        actual_birth_date: null,
-        offspring_ids: '[]',
-        notes: null,
-        created_at: '2023-01-01T00:00:00.000Z',
-        updated_at: '2023-01-01T00:00:00.000Z'
-      }];
+      await expect(repository.create(createInput)).rejects.toThrow('Transaction failed');
 
-      mockQuery.mockResolvedValue(mockResult);
+      expect(mockClientQuery).toHaveBeenCalledWith('BEGIN');
+      expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
+      expect(mockClient.release).toHaveBeenCalled();
+    });
 
-      const result = await repository.create(createData);
+    it('should handle client acquisition errors', async () => {
+      const createInput = BreedingRecordFactory.createInput();
+      mockGetClient.mockRejectedValue(new Error('Client acquisition failed'));
 
-      expect(result.sireId).toBe('sire-3');
-      expect(result.damId).toBe('dam-3');
-      expect(result.expectedDueDate).toBeUndefined();
-      expect(result.actualBirthDate).toBeUndefined();
-      expect(result.offspringIds).toEqual([]);
-      expect(result.notes).toBeNull();
+      await expect(repository.create(createInput)).rejects.toThrow('Client acquisition failed');
+    });
+  });
+
+  describe('error handling', () => {
+    it('should handle connection errors gracefully', async () => {
+      const connectionError = new Error('Connection timeout');
+      mockQuery.mockRejectedValue(connectionError);
+
+      await expect(repository.findById('test-id')).rejects.toThrow('Connection timeout');
+      await expect(repository.findAll()).rejects.toThrow('Connection timeout');
+      await expect(repository.delete('test-id')).rejects.toThrow('Connection timeout');
+    });
+
+    it('should handle SQL constraint violations', async () => {
+      const constraintError = new Error('foreign key constraint violation');
+      mockClientQuery
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockRejectedValueOnce(constraintError); // INSERT fails
+
+      await expect(repository.create(BreedingRecordFactory.createInput())).rejects.toThrow('foreign key constraint violation');
+    });
+
+    it('should handle invalid SQL syntax errors', async () => {
+      const syntaxError = new Error('syntax error at or near');
+      mockQuery.mockRejectedValue(syntaxError);
+
+      await expect(repository.findAll()).rejects.toThrow('syntax error at or near');
+    });
+
+    it('should handle transaction deadlock errors', async () => {
+      const deadlockError = new Error('deadlock detected');
+      mockClientQuery
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockRejectedValueOnce(deadlockError); // Transaction fails
+
+      await expect(repository.create(BreedingRecordFactory.createInput())).rejects.toThrow('deadlock detected');
+      expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
     });
   });
 });
