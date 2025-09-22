@@ -1,3 +1,5 @@
 agentcore-agents/basic-strands-agent/.bedrock_agentcore.yaml
 agentcore-agents/basic-strands-agent/.dockerignore
 agentcore-agents/basic-strands-agent/Dockerfile
+alpaca-farm-mgmt-storage/node_modules
+alpaca-farm-mgmt-storage/dist

@@ -1,0 +1,1908 @@
+openapi: 3.0.3
+info:
+  title: Alpaca Herd Management API
+  description: REST API for managing alpaca herd data including animals, health records, breeding information, and management activities
+  version: 1.0.0
+  contact:
+    name: Alpaca Herd Management System
+    email: support@alpacaherd.com
+
+servers:
+  - url: http://localhost:3000/api/v1
+    description: Development server
+  - url: https://api.alpacaherd.com/v1
+    description: Production server
+
+paths:
+  # Alpaca endpoints
+  /alpacas:
+    get:
+      summary: List all alpacas
+      description: Retrieve a paginated list of alpacas with optional filtering
+      operationId: listAlpacas
+      tags:
+        - Alpacas
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/SortByParam'
+        - $ref: '#/components/parameters/SortOrderParam'
+        - name: name
+          in: query
+          description: Filter by alpaca name (partial match)
+          schema:
+            type: string
+        - name: gender
+          in: query
+          description: Filter by gender
+          schema:
+            type: string
+            enum: [male, female]
+        - name: color
+          in: query
+          description: Filter by color
+          schema:
+            type: string
+        - name: registrationNumber
+          in: query
+          description: Filter by registration number
+          schema:
+            type: string
+        - name: birthDateFrom
+          in: query
+          description: Filter by birth date from (ISO date)
+          schema:
+            type: string
+            format: date
+        - name: birthDateTo
+          in: query
+          description: Filter by birth date to (ISO date)
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Alpaca'
+                      pagination:
+                        $ref: '#/components/schemas/PaginationInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      summary: Create a new alpaca
+      description: Add a new alpaca to the herd
+      operationId: createAlpaca
+      tags:
+        - Alpacas
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAlpacaRequest'
+      responses:
+        '201':
+          description: Alpaca created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Alpaca'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /alpacas/{id}:
+    get:
+      summary: Get alpaca by ID
+      description: Retrieve a specific alpaca by its ID
+      operationId: getAlpaca
+      tags:
+        - Alpacas
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Alpaca'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    put:
+      summary: Update alpaca
+      description: Update an existing alpaca's information
+      operationId: updateAlpaca
+      tags:
+        - Alpacas
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAlpacaRequest'
+      responses:
+        '200':
+          description: Alpaca updated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Alpaca'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    delete:
+      summary: Delete alpaca
+      description: Remove an alpaca from the herd
+      operationId: deleteAlpaca
+      tags:
+        - Alpacas
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '204':
+          description: Alpaca deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /alpacas/{id}/lineage:
+    get:
+      summary: Get alpaca lineage
+      description: Retrieve the family tree for a specific alpaca
+      operationId: getAlpacaLineage
+      tags:
+        - Alpacas
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+        - name: generations
+          in: query
+          description: Number of generations to include (default 3)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10
+            default: 3
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/LineageResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /alpacas/{id}/offspring:
+    get:
+      summary: Get alpaca offspring
+      description: Retrieve all offspring for a specific alpaca
+      operationId: getAlpacaOffspring
+      tags:
+        - Alpacas
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Alpaca'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /alpacas/search:
+    get:
+      summary: Search alpacas
+      description: Advanced search for alpacas with multiple criteria
+      operationId: searchAlpacas
+      tags:
+        - Alpacas
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: q
+          in: query
+          description: Search query (searches name, registration number)
+          schema:
+            type: string
+        - name: gender
+          in: query
+          description: Filter by gender
+          schema:
+            type: string
+            enum: [male, female]
+        - name: color
+          in: query
+          description: Filter by color
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Alpaca'
+                      pagination:
+                        $ref: '#/components/schemas/PaginationInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'  
+# Health Records endpoints
+  /health-records:
+    get:
+      summary: List health records
+      description: Retrieve a paginated list of health records with optional filtering
+      operationId: listHealthRecords
+      tags:
+        - Health Records
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/SortByParam'
+        - $ref: '#/components/parameters/SortOrderParam'
+        - name: alpacaId
+          in: query
+          description: Filter by alpaca ID
+          schema:
+            type: string
+        - name: recordType
+          in: query
+          description: Filter by record type
+          schema:
+            type: string
+            enum: [vaccination, treatment, observation, checkup]
+        - name: dateFrom
+          in: query
+          description: Filter by date from (ISO date)
+          schema:
+            type: string
+            format: date
+        - name: dateTo
+          in: query
+          description: Filter by date to (ISO date)
+          schema:
+            type: string
+            format: date
+        - name: veterinarian
+          in: query
+          description: Filter by veterinarian name
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/HealthRecord'
+                      pagination:
+                        $ref: '#/components/schemas/PaginationInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      summary: Create a new health record
+      description: Add a new health record for an alpaca
+      operationId: createHealthRecord
+      tags:
+        - Health Records
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateHealthRecordRequest'
+      responses:
+        '201':
+          description: Health record created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/HealthRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /health-records/{id}:
+    get:
+      summary: Get health record by ID
+      description: Retrieve a specific health record by its ID
+      operationId: getHealthRecord
+      tags:
+        - Health Records
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/HealthRecord'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    put:
+      summary: Update health record
+      description: Update an existing health record
+      operationId: updateHealthRecord
+      tags:
+        - Health Records
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateHealthRecordRequest'
+      responses:
+        '200':
+          description: Health record updated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/HealthRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    delete:
+      summary: Delete health record
+      description: Remove a health record
+      operationId: deleteHealthRecord
+      tags:
+        - Health Records
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '204':
+          description: Health record deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /alpacas/{id}/health:
+    get:
+      summary: Get health records for alpaca
+      description: Retrieve all health records for a specific alpaca
+      operationId: getAlpacaHealthRecords
+      tags:
+        - Health Records
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+        - name: recordType
+          in: query
+          description: Filter by record type
+          schema:
+            type: string
+            enum: [vaccination, treatment, observation, checkup]
+        - name: dateFrom
+          in: query
+          description: Filter by date from (ISO date)
+          schema:
+            type: string
+            format: date
+        - name: dateTo
+          in: query
+          description: Filter by date to (ISO date)
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/HealthRecord'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /health-records/overdue:
+    get:
+      summary: Get overdue vaccinations
+      description: Retrieve all health records with overdue vaccinations
+      operationId: getOverdueVaccinations
+      tags:
+        - Health Records
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/HealthRecord'
+        '500':
+          $ref: '#/components/responses/InternalServerError'  # Br
+eeding Records endpoints
+  /breeding-records:
+    get:
+      summary: List breeding records
+      description: Retrieve a paginated list of breeding records
+      operationId: listBreedingRecords
+      tags:
+        - Breeding Records
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/SortByParam'
+        - $ref: '#/components/parameters/SortOrderParam'
+        - name: sireId
+          in: query
+          description: Filter by sire ID
+          schema:
+            type: string
+        - name: damId
+          in: query
+          description: Filter by dam ID
+          schema:
+            type: string
+        - name: dateFrom
+          in: query
+          description: Filter by breeding date from (ISO date)
+          schema:
+            type: string
+            format: date
+        - name: dateTo
+          in: query
+          description: Filter by breeding date to (ISO date)
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/BreedingRecord'
+                      pagination:
+                        $ref: '#/components/schemas/PaginationInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      summary: Create a new breeding record
+      description: Add a new breeding record
+      operationId: createBreedingRecord
+      tags:
+        - Breeding Records
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBreedingRecordRequest'
+      responses:
+        '201':
+          description: Breeding record created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/BreedingRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /breeding-records/{id}:
+    get:
+      summary: Get breeding record by ID
+      description: Retrieve a specific breeding record by its ID
+      operationId: getBreedingRecord
+      tags:
+        - Breeding Records
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/BreedingRecord'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    put:
+      summary: Update breeding record
+      description: Update an existing breeding record
+      operationId: updateBreedingRecord
+      tags:
+        - Breeding Records
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBreedingRecordRequest'
+      responses:
+        '200':
+          description: Breeding record updated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/BreedingRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    delete:
+      summary: Delete breeding record
+      description: Remove a breeding record
+      operationId: deleteBreedingRecord
+      tags:
+        - Breeding Records
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '204':
+          description: Breeding record deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /breeding-records/check:
+    post:
+      summary: Check breeding compatibility
+      description: Check if two alpacas are compatible for breeding (inbreeding prevention)
+      operationId: checkBreedingCompatibility
+      tags:
+        - Breeding Records
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BreedingCompatibilityRequest'
+      responses:
+        '200':
+          description: Compatibility check result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/BreedingCompatibilityResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /alpacas/{id}/breeding:
+    get:
+      summary: Get breeding records for alpaca
+      description: Retrieve all breeding records for a specific alpaca (as sire or dam)
+      operationId: getAlpacaBreedingRecords
+      tags:
+        - Breeding Records
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+        - name: role
+          in: query
+          description: Filter by role in breeding (sire, dam, or both)
+          schema:
+            type: string
+            enum: [sire, dam, both]
+            default: both
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/BreedingRecord'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'  # Manage
+ment Activities endpoints
+  /activities:
+    get:
+      summary: List management activities
+      description: Retrieve a paginated list of management activities
+      operationId: listActivities
+      tags:
+        - Activities
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/SortByParam'
+        - $ref: '#/components/parameters/SortOrderParam'
+        - name: activityType
+          in: query
+          description: Filter by activity type
+          schema:
+            type: string
+            enum: [feeding, shearing, weighing, moving, training, other]
+        - name: dateFrom
+          in: query
+          description: Filter by date from (ISO date)
+          schema:
+            type: string
+            format: date
+        - name: dateTo
+          in: query
+          description: Filter by date to (ISO date)
+          schema:
+            type: string
+            format: date
+        - name: performedBy
+          in: query
+          description: Filter by performer name
+          schema:
+            type: string
+        - name: alpacaId
+          in: query
+          description: Filter by alpaca ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ManagementActivity'
+                      pagination:
+                        $ref: '#/components/schemas/PaginationInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      summary: Create a new management activity
+      description: Add a new management activity
+      operationId: createActivity
+      tags:
+        - Activities
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateActivityRequest'
+      responses:
+        '201':
+          description: Activity created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ManagementActivity'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /activities/{id}:
+    get:
+      summary: Get activity by ID
+      description: Retrieve a specific management activity by its ID
+      operationId: getActivity
+      tags:
+        - Activities
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ManagementActivity'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    put:
+      summary: Update activity
+      description: Update an existing management activity
+      operationId: updateActivity
+      tags:
+        - Activities
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateActivityRequest'
+      responses:
+        '200':
+          description: Activity updated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ManagementActivity'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    delete:
+      summary: Delete activity
+      description: Remove a management activity
+      operationId: deleteActivity
+      tags:
+        - Activities
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '204':
+          description: Activity deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /alpacas/{id}/activities:
+    get:
+      summary: Get activities for alpaca
+      description: Retrieve all management activities for a specific alpaca
+      operationId: getAlpacaActivities
+      tags:
+        - Activities
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+        - name: activityType
+          in: query
+          description: Filter by activity type
+          schema:
+            type: string
+            enum: [feeding, shearing, weighing, moving, training, other]
+        - name: dateFrom
+          in: query
+          description: Filter by date from (ISO date)
+          schema:
+            type: string
+            format: date
+        - name: dateTo
+          in: query
+          description: Filter by date to (ISO date)
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ManagementActivity'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /activities/bulk:
+    post:
+      summary: Create bulk activities
+      description: Create a management activity that applies to multiple alpacas
+      operationId: createBulkActivity
+      tags:
+        - Activities
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkActivityRequest'
+      responses:
+        '201':
+          description: Bulk activity created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ManagementActivity'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'componen
+ts:
+  parameters:
+    IdParam:
+      name: id
+      in: path
+      required: true
+      description: Resource ID
+      schema:
+        type: string
+        format: uuid
+
+    PageParam:
+      name: page
+      in: query
+      description: Page number (1-based)
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+
+    LimitParam:
+      name: limit
+      in: query
+      description: Number of items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    SortByParam:
+      name: sortBy
+      in: query
+      description: Field to sort by
+      schema:
+        type: string
+
+    SortOrderParam:
+      name: sortOrder
+      in: query
+      description: Sort order
+      schema:
+        type: string
+        enum: [asc, desc]
+        default: asc
+
+  schemas:
+    # Base response schemas
+    ApiResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+          description: Indicates if the request was successful
+        error:
+          $ref: '#/components/schemas/ApiError'
+
+    ApiError:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Error code
+          enum:
+            - VALIDATION_ERROR
+            - NOT_FOUND
+            - DUPLICATE_REGISTRATION
+            - INVALID_RELATIONSHIP
+            - DATABASE_ERROR
+            - INBREEDING_DETECTED
+        message:
+          type: string
+          description: Human-readable error message
+        details:
+          type: object
+          description: Additional error details
+          properties:
+            field:
+              type: string
+              description: Field that caused the error
+            value:
+              description: Value that caused the error
+            constraint:
+              type: string
+              description: Constraint that was violated
+
+    PaginationInfo:
+      type: object
+      required:
+        - page
+        - limit
+        - total
+        - totalPages
+      properties:
+        page:
+          type: integer
+          description: Current page number
+        limit:
+          type: integer
+          description: Items per page
+        total:
+          type: integer
+          description: Total number of items
+        totalPages:
+          type: integer
+          description: Total number of pages
+
+    # Core entity schemas
+    FiberQuality:
+      type: object
+      properties:
+        micronCount:
+          type: number
+          format: float
+          description: Fiber micron count
+          minimum: 10
+          maximum: 40
+        stapleLength:
+          type: number
+          format: float
+          description: Staple length in inches
+          minimum: 1
+          maximum: 8
+        crimp:
+          type: string
+          description: Fiber crimp description
+          enum: [fine, medium, coarse]
+        density:
+          type: string
+          description: Fiber density description
+          enum: [light, medium, dense]
+
+    Alpaca:
+      type: object
+      required:
+        - id
+        - name
+        - birthDate
+        - gender
+        - color
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique alpaca identifier
+        name:
+          type: string
+          description: Alpaca name
+          minLength: 1
+          maxLength: 100
+        registrationNumber:
+          type: string
+          description: Official registration number
+          maxLength: 50
+        birthDate:
+          type: string
+          format: date
+          description: Birth date (ISO date format)
+        gender:
+          type: string
+          enum: [male, female]
+          description: Alpaca gender
+        color:
+          type: string
+          description: Alpaca color
+          minLength: 1
+          maxLength: 50
+        weight:
+          type: number
+          format: float
+          description: Weight in pounds
+          minimum: 0
+          maximum: 500
+        height:
+          type: number
+          format: float
+          description: Height in inches
+          minimum: 0
+          maximum: 100
+        fiberQuality:
+          $ref: '#/components/schemas/FiberQuality'
+        sireId:
+          type: string
+          format: uuid
+          description: Father's ID
+        damId:
+          type: string
+          format: uuid
+          description: Mother's ID
+        createdAt:
+          type: string
+          format: date-time
+          description: Creation timestamp
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+
+    HealthRecord:
+      type: object
+      required:
+        - id
+        - alpacaId
+        - recordType
+        - date
+        - description
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique health record identifier
+        alpacaId:
+          type: string
+          format: uuid
+          description: Associated alpaca ID
+        recordType:
+          type: string
+          enum: [vaccination, treatment, observation, checkup]
+          description: Type of health record
+        date:
+          type: string
+          format: date
+          description: Record date (ISO date format)
+        description:
+          type: string
+          description: Health record description
+          minLength: 1
+          maxLength: 1000
+        veterinarian:
+          type: string
+          description: Veterinarian name
+          maxLength: 100
+        nextDueDate:
+          type: string
+          format: date
+          description: Next due date for follow-up (ISO date format)
+        notes:
+          type: string
+          description: Additional notes
+          maxLength: 2000
+        createdAt:
+          type: string
+          format: date-time
+          description: Creation timestamp
+
+    BreedingRecord:
+      type: object
+      required:
+        - id
+        - sireId
+        - damId
+        - breedingDate
+        - offspringIds
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique breeding record identifier
+        sireId:
+          type: string
+          format: uuid
+          description: Sire (father) alpaca ID
+        damId:
+          type: string
+          format: uuid
+          description: Dam (mother) alpaca ID
+        breedingDate:
+          type: string
+          format: date
+          description: Breeding date (ISO date format)
+        expectedDueDate:
+          type: string
+          format: date
+          description: Expected due date (ISO date format)
+        actualBirthDate:
+          type: string
+          format: date
+          description: Actual birth date (ISO date format)
+        offspringIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Array of offspring alpaca IDs
+        notes:
+          type: string
+          description: Breeding notes
+          maxLength: 2000
+        createdAt:
+          type: string
+          format: date-time
+          description: Creation timestamp
+
+    ManagementActivity:
+      type: object
+      required:
+        - id
+        - activityType
+        - date
+        - alpacaIds
+        - performedBy
+        - description
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique activity identifier
+        activityType:
+          type: string
+          enum: [feeding, shearing, weighing, moving, training, other]
+          description: Type of management activity
+        date:
+          type: string
+          format: date
+          description: Activity date (ISO date format)
+        alpacaIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Array of involved alpaca IDs
+          minItems: 1
+        performedBy:
+          type: string
+          description: Person who performed the activity
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          description: Activity description
+          minLength: 1
+          maxLength: 1000
+        notes:
+          type: string
+          description: Additional notes
+          maxLength: 2000
+        createdAt:
+          type: string
+          format: date-time
+          description: Creation timestamp    
+# Request schemas
+    CreateAlpacaRequest:
+      type: object
+      required:
+        - name
+        - birthDate
+        - gender
+        - color
+      properties:
+        name:
+          type: string
+          description: Alpaca name
+          minLength: 1
+          maxLength: 100
+        registrationNumber:
+          type: string
+          description: Official registration number
+          maxLength: 50
+        birthDate:
+          type: string
+          format: date
+          description: Birth date (ISO date format)
+        gender:
+          type: string
+          enum: [male, female]
+          description: Alpaca gender
+        color:
+          type: string
+          description: Alpaca color
+          minLength: 1
+          maxLength: 50
+        weight:
+          type: number
+          format: float
+          description: Weight in pounds
+          minimum: 0
+          maximum: 500
+        height:
+          type: number
+          format: float
+          description: Height in inches
+          minimum: 0
+          maximum: 100
+        fiberQuality:
+          $ref: '#/components/schemas/FiberQuality'
+        sireId:
+          type: string
+          format: uuid
+          description: Father's ID
+        damId:
+          type: string
+          format: uuid
+          description: Mother's ID
+
+    UpdateAlpacaRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Alpaca name
+          minLength: 1
+          maxLength: 100
+        registrationNumber:
+          type: string
+          description: Official registration number
+          maxLength: 50
+        birthDate:
+          type: string
+          format: date
+          description: Birth date (ISO date format)
+        gender:
+          type: string
+          enum: [male, female]
+          description: Alpaca gender
+        color:
+          type: string
+          description: Alpaca color
+          minLength: 1
+          maxLength: 50
+        weight:
+          type: number
+          format: float
+          description: Weight in pounds
+          minimum: 0
+          maximum: 500
+        height:
+          type: number
+          format: float
+          description: Height in inches
+          minimum: 0
+          maximum: 100
+        fiberQuality:
+          $ref: '#/components/schemas/FiberQuality'
+        sireId:
+          type: string
+          format: uuid
+          description: Father's ID
+        damId:
+          type: string
+          format: uuid
+          description: Mother's ID
+
+    CreateHealthRecordRequest:
+      type: object
+      required:
+        - alpacaId
+        - recordType
+        - date
+        - description
+      properties:
+        alpacaId:
+          type: string
+          format: uuid
+          description: Associated alpaca ID
+        recordType:
+          type: string
+          enum: [vaccination, treatment, observation, checkup]
+          description: Type of health record
+        date:
+          type: string
+          format: date
+          description: Record date (ISO date format)
+        description:
+          type: string
+          description: Health record description
+          minLength: 1
+          maxLength: 1000
+        veterinarian:
+          type: string
+          description: Veterinarian name
+          maxLength: 100
+        nextDueDate:
+          type: string
+          format: date
+          description: Next due date for follow-up (ISO date format)
+        notes:
+          type: string
+          description: Additional notes
+          maxLength: 2000
+
+    UpdateHealthRecordRequest:
+      type: object
+      properties:
+        alpacaId:
+          type: string
+          format: uuid
+          description: Associated alpaca ID
+        recordType:
+          type: string
+          enum: [vaccination, treatment, observation, checkup]
+          description: Type of health record
+        date:
+          type: string
+          format: date
+          description: Record date (ISO date format)
+        description:
+          type: string
+          description: Health record description
+          minLength: 1
+          maxLength: 1000
+        veterinarian:
+          type: string
+          description: Veterinarian name
+          maxLength: 100
+        nextDueDate:
+          type: string
+          format: date
+          description: Next due date for follow-up (ISO date format)
+        notes:
+          type: string
+          description: Additional notes
+          maxLength: 2000
+
+    CreateBreedingRecordRequest:
+      type: object
+      required:
+        - sireId
+        - damId
+        - breedingDate
+      properties:
+        sireId:
+          type: string
+          format: uuid
+          description: Sire (father) alpaca ID
+        damId:
+          type: string
+          format: uuid
+          description: Dam (mother) alpaca ID
+        breedingDate:
+          type: string
+          format: date
+          description: Breeding date (ISO date format)
+        expectedDueDate:
+          type: string
+          format: date
+          description: Expected due date (ISO date format)
+        notes:
+          type: string
+          description: Breeding notes
+          maxLength: 2000
+
+    UpdateBreedingRecordRequest:
+      type: object
+      properties:
+        sireId:
+          type: string
+          format: uuid
+          description: Sire (father) alpaca ID
+        damId:
+          type: string
+          format: uuid
+          description: Dam (mother) alpaca ID
+        breedingDate:
+          type: string
+          format: date
+          description: Breeding date (ISO date format)
+        expectedDueDate:
+          type: string
+          format: date
+          description: Expected due date (ISO date format)
+        actualBirthDate:
+          type: string
+          format: date
+          description: Actual birth date (ISO date format)
+        offspringIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Array of offspring alpaca IDs
+        notes:
+          type: string
+          description: Breeding notes
+          maxLength: 2000
+
+    CreateActivityRequest:
+      type: object
+      required:
+        - activityType
+        - date
+        - alpacaIds
+        - performedBy
+        - description
+      properties:
+        activityType:
+          type: string
+          enum: [feeding, shearing, weighing, moving, training, other]
+          description: Type of management activity
+        date:
+          type: string
+          format: date
+          description: Activity date (ISO date format)
+        alpacaIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Array of involved alpaca IDs
+          minItems: 1
+        performedBy:
+          type: string
+          description: Person who performed the activity
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          description: Activity description
+          minLength: 1
+          maxLength: 1000
+        notes:
+          type: string
+          description: Additional notes
+          maxLength: 2000
+
+    UpdateActivityRequest:
+      type: object
+      properties:
+        activityType:
+          type: string
+          enum: [feeding, shearing, weighing, moving, training, other]
+          description: Type of management activity
+        date:
+          type: string
+          format: date
+          description: Activity date (ISO date format)
+        alpacaIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Array of involved alpaca IDs
+          minItems: 1
+        performedBy:
+          type: string
+          description: Person who performed the activity
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          description: Activity description
+          minLength: 1
+          maxLength: 1000
+        notes:
+          type: string
+          description: Additional notes
+          maxLength: 2000
+
+    BulkActivityRequest:
+      type: object
+      required:
+        - activityType
+        - date
+        - alpacaIds
+        - performedBy
+        - description
+      properties:
+        activityType:
+          type: string
+          enum: [feeding, shearing, weighing, moving, training, other]
+          description: Type of management activity
+        date:
+          type: string
+          format: date
+          description: Activity date (ISO date format)
+        alpacaIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Array of involved alpaca IDs
+          minItems: 1
+        performedBy:
+          type: string
+          description: Person who performed the activity
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          description: Activity description
+          minLength: 1
+          maxLength: 1000
+        notes:
+          type: string
+          description: Additional notes
+          maxLength: 2000
+
+    # Response schemas
+    LineageResponse:
+      type: object
+      required:
+        - alpaca
+        - ancestors
+        - descendants
+      properties:
+        alpaca:
+          $ref: '#/components/schemas/Alpaca'
+        ancestors:
+          type: array
+          items:
+            type: object
+            required:
+              - generation
+              - alpacas
+            properties:
+              generation:
+                type: integer
+                description: Generation number (1 = parents, 2 = grandparents, etc.)
+              alpacas:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Alpaca'
+        descendants:
+          type: array
+          items:
+            type: object
+            required:
+              - generation
+              - alpacas
+            properties:
+              generation:
+                type: integer
+                description: Generation number (1 = children, 2 = grandchildren, etc.)
+              alpacas:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Alpaca'
+
+    BreedingCompatibilityRequest:
+      type: object
+      required:
+        - sireId
+        - damId
+      properties:
+        sireId:
+          type: string
+          format: uuid
+          description: Sire (father) alpaca ID
+        damId:
+          type: string
+          format: uuid
+          description: Dam (mother) alpaca ID
+
+    BreedingCompatibilityResponse:
+      type: object
+      required:
+        - compatible
+      properties:
+        compatible:
+          type: boolean
+          description: Whether the breeding is compatible
+        reason:
+          type: string
+          description: Reason for incompatibility (if applicable)
+        relationshipDegree:
+          type: integer
+          description: Degree of relationship (if related)
+          minimum: 0
+
+  responses:
+    BadRequest:
+      description: Bad request - invalid parameters
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ApiResponse'
+              - type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  error:
+                    $ref: '#/components/schemas/ApiError'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ApiResponse'
+              - type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  error:
+                    allOf:
+                      - $ref: '#/components/schemas/ApiError'
+                      - type: object
+                        properties:
+                          code:
+                            type: string
+                            example: NOT_FOUND
+                          message:
+                            type: string
+                            example: Resource not found
+
+    Conflict:
+      description: Resource conflict (e.g., duplicate registration number)
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ApiResponse'
+              - type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  error:
+                    allOf:
+                      - $ref: '#/components/schemas/ApiError'
+                      - type: object
+                        properties:
+                          code:
+                            type: string
+                            example: DUPLICATE_REGISTRATION
+                          message:
+                            type: string
+                            example: Registration number already exists
+
+    ValidationError:
+      description: Validation error - invalid request data
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ApiResponse'
+              - type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  error:
+                    allOf:
+                      - $ref: '#/components/schemas/ApiError'
+                      - type: object
+                        properties:
+                          code:
+                            type: string
+                            example: VALIDATION_ERROR
+                          message:
+                            type: string
+                            example: Validation failed
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ApiResponse'
+              - type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  error:
+                    allOf:
+                      - $ref: '#/components/schemas/ApiError'
+                      - type: object
+                        properties:
+                          code:
+                            type: string
+                            example: DATABASE_ERROR
+                          message:
+                            type: string
+                            example: Internal server error
+
+tags:
+  - name: Alpacas
+    description: Alpaca management operations
+  - name: Health Records
+    description: Health record management operations
+  - name: Breeding Records
+    description: Breeding record management operations
+  - name: Activities
+    description: Management activity operations
