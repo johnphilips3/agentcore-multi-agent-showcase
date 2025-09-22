@@ -1,109 +1,142 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { HealthServiceImpl, HealthServiceError } from '../health-service';
-import { HealthRepository } from '../../repositories';
-import { AlpacaRepository } from '../../repositories';
-import { HealthRecord, CreateHealthRecordInput, UpdateHealthRecordInput, Alpaca } from '../../models';
-
-// Mock repositories
-const mockHealthRepository: HealthRepository = {
-  create: vi.fn(),
-  findById: vi.fn(),
-  findAll: vi.fn(),
-  update: vi.fn(),
-  delete: vi.fn(),
-  findByAlpaca: vi.fn(),
-  findByDateRange: vi.fn(),
-  findByRecordType: vi.fn(),
-  findOverdueVaccinations: vi.fn()
-};
-
-const mockAlpacaRepository: AlpacaRepository = {
-  create: vi.fn(),
-  findById: vi.fn(),
-  findAll: vi.fn(),
-  update: vi.fn(),
-  delete: vi.fn(),
-  findByRegistrationNumber: vi.fn(),
-  findByParent: vi.fn(),
-  findByGender: vi.fn(),
-  getLineage: vi.fn()
-};
+import { HealthService, HealthAlert, HealthSummary } from '../health-service';
+import { PostgreSQLHealthRepository, QueryOptions, PaginatedResult } from '../../repositories/pg-health-repository';
+import { HealthRecord, CreateHealthRecordInput, UpdateHealthRecordInput } from '../../models/health-record';
+import { RecordType } from '../../models/common';
+import { HealthRecordFactory } from '../../__tests__/data-factories';
+import { MockHealthRepositoryFactory } from '../../__tests__/mock-factories';
 
 describe('HealthService', () => {
-  let service: HealthServiceImpl;
+  let service: HealthService;
+  let mockRepository: ReturnType<typeof MockHealthRepositoryFactory.create>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    service = new HealthServiceImpl(mockHealthRepository, mockAlpacaRepository);
+    mockRepository = MockHealthRepositoryFactory.create();
+    service = new HealthService(mockRepository as any);
   });
 
-  const mockAlpaca: Alpaca = {
-    id: '550e8400-e29b-41d4-a716-446655440000',
-    name: 'Test Alpaca',
-    birthDate: new Date('2020-01-01'),
-    gender: 'female',
-    color: 'white',
-    createdAt: new Date(),
-    updatedAt: new Date()
-  };
-
-  const mockHealthRecord: HealthRecord = {
-    id: '550e8400-e29b-41d4-a716-446655440001',
-    alpacaId: '550e8400-e29b-41d4-a716-446655440000',
+  const mockHealthRecord = HealthRecordFactory.create({
+    id: 'health-1',
+    alpacaId: 'alpaca-1',
     recordType: 'vaccination',
     date: new Date('2023-01-01'),
     description: 'Annual vaccination',
     veterinarian: 'Dr. Smith',
     nextDueDate: new Date('2024-01-01'),
-    notes: 'No adverse reactions',
-    createdAt: new Date(),
-    updatedAt: new Date()
+    notes: 'No adverse reactions'
+  });
+
+  const mockPaginatedResult: PaginatedResult<HealthRecord> = {
+    data: [mockHealthRecord],
+    total: 1,
+    page: 1,
+    limit: 10,
+    totalPages: 1
   };
 
   describe('createHealthRecord', () => {
     it('should successfully create a valid health record', async () => {
       const input: CreateHealthRecordInput = {
-        alpacaId: '550e8400-e29b-41d4-a716-446655440000',
+        alpacaId: 'alpaca-1',
         recordType: 'vaccination',
         date: new Date('2023-01-01'),
         description: 'Annual vaccination',
         veterinarian: 'Dr. Smith'
       };
 
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(mockAlpaca);
-      vi.mocked(mockHealthRepository.create).mockResolvedValue(mockHealthRecord);
+      mockRepository.create.mockResolvedValue(mockHealthRecord);
 
       const result = await service.createHealthRecord(input);
 
       expect(result).toEqual(mockHealthRecord);
-      expect(mockAlpacaRepository.findById).toHaveBeenCalledWith('550e8400-e29b-41d4-a716-446655440000');
-      expect(mockHealthRepository.create).toHaveBeenCalledWith(input);
+      expect(mockRepository.create).toHaveBeenCalledWith(input);
     });
 
-    it('should fail creation with invalid input', async () => {
+    it('should throw error for empty alpaca ID', async () => {
       const input: CreateHealthRecordInput = {
-        alpacaId: 'invalid-id', // Invalid UUID
+        alpacaId: '',
         recordType: 'vaccination',
         date: new Date('2023-01-01'),
         description: 'Annual vaccination'
       };
 
-      await expect(service.createHealthRecord(input))
-        .rejects.toThrow(HealthServiceError);
+      await expect(service.createHealthRecord(input)).rejects.toThrow('Alpaca ID is required');
+      expect(mockRepository.create).not.toHaveBeenCalled();
     });
 
-    it('should fail creation when alpaca does not exist', async () => {
+    it('should throw error for whitespace-only alpaca ID', async () => {
       const input: CreateHealthRecordInput = {
-        alpacaId: '550e8400-e29b-41d4-a716-446655440000',
+        alpacaId: '   ',
         recordType: 'vaccination',
         date: new Date('2023-01-01'),
         description: 'Annual vaccination'
       };
 
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(null);
+      await expect(service.createHealthRecord(input)).rejects.toThrow('Alpaca ID is required');
+      expect(mockRepository.create).not.toHaveBeenCalled();
+    });
 
-      await expect(service.createHealthRecord(input))
-        .rejects.toThrow('Alpaca not found');
+    it('should throw error for missing record type', async () => {
+      const input: CreateHealthRecordInput = {
+        alpacaId: 'alpaca-1',
+        recordType: undefined as any,
+        date: new Date('2023-01-01'),
+        description: 'Annual vaccination'
+      };
+
+      await expect(service.createHealthRecord(input)).rejects.toThrow('Record type is required');
+      expect(mockRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for missing date', async () => {
+      const input: CreateHealthRecordInput = {
+        alpacaId: 'alpaca-1',
+        recordType: 'vaccination',
+        date: undefined as any,
+        description: 'Annual vaccination'
+      };
+
+      await expect(service.createHealthRecord(input)).rejects.toThrow('Date is required');
+      expect(mockRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for empty description', async () => {
+      const input: CreateHealthRecordInput = {
+        alpacaId: 'alpaca-1',
+        recordType: 'vaccination',
+        date: new Date('2023-01-01'),
+        description: ''
+      };
+
+      await expect(service.createHealthRecord(input)).rejects.toThrow('Description is required');
+      expect(mockRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for whitespace-only description', async () => {
+      const input: CreateHealthRecordInput = {
+        alpacaId: 'alpaca-1',
+        recordType: 'vaccination',
+        date: new Date('2023-01-01'),
+        description: '   '
+      };
+
+      await expect(service.createHealthRecord(input)).rejects.toThrow('Description is required');
+      expect(mockRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('should handle repository errors', async () => {
+      const input: CreateHealthRecordInput = {
+        alpacaId: 'alpaca-1',
+        recordType: 'vaccination',
+        date: new Date('2023-01-01'),
+        description: 'Annual vaccination'
+      };
+
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.create.mockRejectedValue(repositoryError);
+
+      await expect(service.createHealthRecord(input)).rejects.toThrow('Database connection failed');
     });
   });
 
@@ -115,135 +148,293 @@ describe('HealthService', () => {
       };
 
       const updatedRecord = { ...mockHealthRecord, ...updates };
-
-      vi.mocked(mockHealthRepository.findById).mockResolvedValue(mockHealthRecord);
-      vi.mocked(mockHealthRepository.update).mockResolvedValue(updatedRecord);
+      mockRepository.update.mockResolvedValue(updatedRecord);
 
       const result = await service.updateHealthRecord('health-1', updates);
 
       expect(result).toEqual(updatedRecord);
-      expect(mockHealthRepository.update).toHaveBeenCalledWith('health-1', updates);
+      expect(mockRepository.update).toHaveBeenCalledWith('health-1', updates);
     });
 
-    it('should throw error when updating non-existent health record', async () => {
-      vi.mocked(mockHealthRepository.findById).mockResolvedValue(null);
+    it('should throw error for empty ID', async () => {
+      const updates: UpdateHealthRecordInput = { description: 'Updated' };
 
-      await expect(service.updateHealthRecord('invalid-id', { description: 'Updated' }))
-        .rejects.toThrow('Health record not found');
+      await expect(service.updateHealthRecord('', updates)).rejects.toThrow('Health record ID is required');
+      expect(mockRepository.update).not.toHaveBeenCalled();
     });
 
-    it('should validate alpaca exists when updating alpacaId', async () => {
+    it('should throw error for whitespace-only ID', async () => {
+      const updates: UpdateHealthRecordInput = { description: 'Updated' };
+
+      await expect(service.updateHealthRecord('   ', updates)).rejects.toThrow('Health record ID is required');
+      expect(mockRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for empty alpaca ID in updates', async () => {
+      const updates: UpdateHealthRecordInput = { alpacaId: '' };
+
+      await expect(service.updateHealthRecord('health-1', updates))
+        .rejects.toThrow('Alpaca ID cannot be empty');
+      expect(mockRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for whitespace-only alpaca ID in updates', async () => {
+      const updates: UpdateHealthRecordInput = { alpacaId: '   ' };
+
+      await expect(service.updateHealthRecord('health-1', updates))
+        .rejects.toThrow('Alpaca ID cannot be empty');
+      expect(mockRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for empty description in updates', async () => {
+      const updates: UpdateHealthRecordInput = { description: '' };
+
+      await expect(service.updateHealthRecord('health-1', updates))
+        .rejects.toThrow('Description cannot be empty');
+      expect(mockRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for whitespace-only description in updates', async () => {
+      const updates: UpdateHealthRecordInput = { description: '   ' };
+
+      await expect(service.updateHealthRecord('health-1', updates))
+        .rejects.toThrow('Description cannot be empty');
+      expect(mockRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('should allow undefined values in updates', async () => {
       const updates: UpdateHealthRecordInput = {
-        alpacaId: '550e8400-e29b-41d4-a716-446655440002'
+        alpacaId: undefined,
+        description: undefined
       };
 
-      vi.mocked(mockHealthRepository.findById).mockResolvedValue(mockHealthRecord);
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(null);
+      const updatedRecord = { ...mockHealthRecord };
+      mockRepository.update.mockResolvedValue(updatedRecord);
 
-      await expect(service.updateHealthRecord('550e8400-e29b-41d4-a716-446655440001', updates))
-        .rejects.toThrow('Alpaca not found');
+      const result = await service.updateHealthRecord('health-1', updates);
+
+      expect(result).toEqual(updatedRecord);
+      expect(mockRepository.update).toHaveBeenCalledWith('health-1', updates);
+    });
+
+    it('should handle repository errors', async () => {
+      const updates: UpdateHealthRecordInput = { description: 'Updated' };
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.update.mockRejectedValue(repositoryError);
+
+      await expect(service.updateHealthRecord('health-1', updates))
+        .rejects.toThrow('Database connection failed');
+    });
+
+    it('should return null when health record not found', async () => {
+      const updates: UpdateHealthRecordInput = { description: 'Updated' };
+      mockRepository.update.mockResolvedValue(null);
+
+      const result = await service.updateHealthRecord('nonexistent-id', updates);
+
+      expect(result).toBeNull();
+      expect(mockRepository.update).toHaveBeenCalledWith('nonexistent-id', updates);
     });
   });
 
   describe('getHealthRecord', () => {
     it('should return health record by ID', async () => {
-      vi.mocked(mockHealthRepository.findById).mockResolvedValue(mockHealthRecord);
+      mockRepository.findById.mockResolvedValue(mockHealthRecord);
 
       const result = await service.getHealthRecord('health-1');
 
       expect(result).toEqual(mockHealthRecord);
-      expect(mockHealthRepository.findById).toHaveBeenCalledWith('health-1');
+      expect(mockRepository.findById).toHaveBeenCalledWith('health-1');
     });
 
     it('should return null for non-existent health record', async () => {
-      vi.mocked(mockHealthRepository.findById).mockResolvedValue(null);
+      mockRepository.findById.mockResolvedValue(null);
 
       const result = await service.getHealthRecord('invalid-id');
 
       expect(result).toBeNull();
+      expect(mockRepository.findById).toHaveBeenCalledWith('invalid-id');
+    });
+
+    it('should throw error for empty ID', async () => {
+      await expect(service.getHealthRecord('')).rejects.toThrow('Health record ID is required');
+      expect(mockRepository.findById).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for whitespace-only ID', async () => {
+      await expect(service.getHealthRecord('   ')).rejects.toThrow('Health record ID is required');
+      expect(mockRepository.findById).not.toHaveBeenCalled();
+    });
+
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.findById.mockRejectedValue(repositoryError);
+
+      await expect(service.getHealthRecord('health-1')).rejects.toThrow('Database connection failed');
     });
   });
 
-  describe('getAlpacaHealthRecords', () => {
+  describe('getAllHealthRecords', () => {
+    it('should return all health records with default options', async () => {
+      mockRepository.findAll.mockResolvedValue(mockPaginatedResult);
+
+      const result = await service.getAllHealthRecords();
+
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.findAll).toHaveBeenCalledWith({});
+    });
+
+    it('should pass query options to repository', async () => {
+      const options: QueryOptions = { limit: 10, offset: 0 };
+      mockRepository.findAll.mockResolvedValue(mockPaginatedResult);
+
+      const result = await service.getAllHealthRecords(options);
+
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.findAll).toHaveBeenCalledWith(options);
+    });
+
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.findAll.mockRejectedValue(repositoryError);
+
+      await expect(service.getAllHealthRecords()).rejects.toThrow('Database connection failed');
+    });
+  });
+
+  describe('deleteHealthRecord', () => {
+    it('should successfully delete a health record', async () => {
+      mockRepository.delete.mockResolvedValue(true);
+
+      const result = await service.deleteHealthRecord('health-1');
+
+      expect(result).toBe(true);
+      expect(mockRepository.delete).toHaveBeenCalledWith('health-1');
+    });
+
+    it('should return false when health record not found', async () => {
+      mockRepository.delete.mockResolvedValue(false);
+
+      const result = await service.deleteHealthRecord('nonexistent-id');
+
+      expect(result).toBe(false);
+      expect(mockRepository.delete).toHaveBeenCalledWith('nonexistent-id');
+    });
+
+    it('should throw error for empty ID', async () => {
+      await expect(service.deleteHealthRecord('')).rejects.toThrow('Health record ID is required');
+      expect(mockRepository.delete).not.toHaveBeenCalled();
+    });
+
+    it('should throw error for whitespace-only ID', async () => {
+      await expect(service.deleteHealthRecord('   ')).rejects.toThrow('Health record ID is required');
+      expect(mockRepository.delete).not.toHaveBeenCalled();
+    });
+
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.delete.mockRejectedValue(repositoryError);
+
+      await expect(service.deleteHealthRecord('health-1')).rejects.toThrow('Database connection failed');
+    });
+  });
+
+  describe('getHealthRecordsByAlpaca', () => {
     it('should return health records for an alpaca', async () => {
-      const healthRecords = [mockHealthRecord];
+      mockRepository.findByAlpaca.mockResolvedValue(mockPaginatedResult);
 
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(mockAlpaca);
-      vi.mocked(mockHealthRepository.findByAlpaca).mockResolvedValue(healthRecords);
+      const result = await service.getHealthRecordsByAlpaca('alpaca-1');
 
-      const result = await service.getAlpacaHealthRecords('550e8400-e29b-41d4-a716-446655440000');
-
-      expect(result).toEqual(healthRecords);
-      expect(mockAlpacaRepository.findById).toHaveBeenCalledWith('550e8400-e29b-41d4-a716-446655440000');
-      expect(mockHealthRepository.findByAlpaca).toHaveBeenCalledWith('550e8400-e29b-41d4-a716-446655440000');
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.findByAlpaca).toHaveBeenCalledWith('alpaca-1', {});
     });
 
-    it('should throw error for non-existent alpaca', async () => {
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(null);
-
-      await expect(service.getAlpacaHealthRecords('invalid-id'))
-        .rejects.toThrow('Alpaca not found');
-    });
-  });
-
-  describe('getHealthRecordsByDateRange', () => {
-    it('should return health records within date range', async () => {
-      const startDate = new Date('2023-01-01');
-      const endDate = new Date('2023-12-31');
-      const healthRecords = [mockHealthRecord];
-
-      vi.mocked(mockHealthRepository.findByDateRange).mockResolvedValue(healthRecords);
-
-      const result = await service.getHealthRecordsByDateRange(startDate, endDate);
-
-      expect(result).toEqual(healthRecords);
-      expect(mockHealthRepository.findByDateRange).toHaveBeenCalledWith(startDate, endDate);
+    it('should throw error for empty alpaca ID', async () => {
+      await expect(service.getHealthRecordsByAlpaca('')).rejects.toThrow('Alpaca ID is required');
+      expect(mockRepository.findByAlpaca).not.toHaveBeenCalled();
     });
 
-    it('should throw error when start date is after end date', async () => {
-      const startDate = new Date('2023-12-31');
-      const endDate = new Date('2023-01-01');
+    it('should throw error for whitespace-only alpaca ID', async () => {
+      await expect(service.getHealthRecordsByAlpaca('   ')).rejects.toThrow('Alpaca ID is required');
+      expect(mockRepository.findByAlpaca).not.toHaveBeenCalled();
+    });
 
-      await expect(service.getHealthRecordsByDateRange(startDate, endDate))
-        .rejects.toThrow('Start date must be before end date');
+    it('should pass query options to repository', async () => {
+      const options: QueryOptions = { limit: 5, offset: 10 };
+      mockRepository.findByAlpaca.mockResolvedValue(mockPaginatedResult);
+
+      const result = await service.getHealthRecordsByAlpaca('alpaca-1', options);
+
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.findByAlpaca).toHaveBeenCalledWith('alpaca-1', options);
+    });
+
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.findByAlpaca.mockRejectedValue(repositoryError);
+
+      await expect(service.getHealthRecordsByAlpaca('alpaca-1')).rejects.toThrow('Database connection failed');
     });
   });
 
   describe('getHealthRecordsByType', () => {
     it('should return health records by type', async () => {
-      const healthRecords = [mockHealthRecord];
-
-      vi.mocked(mockHealthRepository.findByRecordType).mockResolvedValue(healthRecords);
+      mockRepository.findByRecordType.mockResolvedValue(mockPaginatedResult);
 
       const result = await service.getHealthRecordsByType('vaccination');
 
-      expect(result).toEqual(healthRecords);
-      expect(mockHealthRepository.findByRecordType).toHaveBeenCalledWith('vaccination');
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.findByRecordType).toHaveBeenCalledWith('vaccination', {});
+    });
+
+    it('should pass query options to repository', async () => {
+      const options: QueryOptions = { limit: 5, offset: 10 };
+      mockRepository.findByRecordType.mockResolvedValue(mockPaginatedResult);
+
+      const result = await service.getHealthRecordsByType('checkup', options);
+
+      expect(result).toEqual(mockPaginatedResult);
+      expect(mockRepository.findByRecordType).toHaveBeenCalledWith('checkup', options);
+    });
+
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.findByRecordType.mockRejectedValue(repositoryError);
+
+      await expect(service.getHealthRecordsByType('vaccination')).rejects.toThrow('Database connection failed');
     });
   });
 
   describe('getOverdueVaccinations', () => {
     it('should return overdue vaccinations', async () => {
       const overdueRecords = [mockHealthRecord];
-
-      vi.mocked(mockHealthRepository.findOverdueVaccinations).mockResolvedValue(overdueRecords);
+      mockRepository.getOverdueVaccinations.mockResolvedValue(overdueRecords);
 
       const result = await service.getOverdueVaccinations();
 
       expect(result).toEqual(overdueRecords);
-      expect(mockHealthRepository.findOverdueVaccinations).toHaveBeenCalled();
+      expect(mockRepository.getOverdueVaccinations).toHaveBeenCalled();
+    });
+
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.getOverdueVaccinations.mockRejectedValue(repositoryError);
+
+      await expect(service.getOverdueVaccinations()).rejects.toThrow('Database connection failed');
     });
   });
 
   describe('getHealthAlerts', () => {
     it('should return health alerts for overdue items', async () => {
-      const overdueRecord: HealthRecord = {
-        ...mockHealthRecord,
-        nextDueDate: new Date('2022-01-01') // Overdue
-      };
+      const overdueRecord = HealthRecordFactory.create({
+        id: 'overdue-1',
+        alpacaId: 'alpaca-1',
+        recordType: 'vaccination',
+        description: 'Annual vaccination',
+        nextDueDate: new Date('2022-01-01') // Very overdue
+      });
 
-      vi.mocked(mockHealthRepository.findOverdueVaccinations).mockResolvedValue([overdueRecord]);
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(mockAlpaca);
+      mockRepository.getOverdueVaccinations.mockResolvedValue([overdueRecord]);
 
       const result = await service.getHealthAlerts();
 
@@ -251,230 +442,175 @@ describe('HealthService', () => {
       expect(result[0]).toMatchObject({
         id: overdueRecord.id,
         alpacaId: overdueRecord.alpacaId,
-        alpacaName: mockAlpaca.name,
         recordType: overdueRecord.recordType,
-        description: overdueRecord.description
+        description: `Overdue ${overdueRecord.recordType}: ${overdueRecord.description}`,
+        dueDate: overdueRecord.nextDueDate
       });
       expect(result[0].daysOverdue).toBeGreaterThan(0);
       expect(result[0].priority).toBe('critical'); // Very overdue
     });
 
-    it('should handle records without alpacas', async () => {
-      const overdueRecord: HealthRecord = {
-        ...mockHealthRecord,
-        nextDueDate: new Date('2022-01-01')
-      };
+    it('should calculate correct priority levels', async () => {
+      const now = new Date();
+      const records = [
+        HealthRecordFactory.create({
+          id: 'low-1',
+          nextDueDate: new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000) // 5 days overdue
+        }),
+        HealthRecordFactory.create({
+          id: 'medium-1',
+          nextDueDate: new Date(now.getTime() - 15 * 24 * 60 * 60 * 1000) // 15 days overdue
+        }),
+        HealthRecordFactory.create({
+          id: 'high-1',
+          nextDueDate: new Date(now.getTime() - 45 * 24 * 60 * 60 * 1000) // 45 days overdue
+        }),
+        HealthRecordFactory.create({
+          id: 'critical-1',
+          nextDueDate: new Date(now.getTime() - 100 * 24 * 60 * 60 * 1000) // 100 days overdue
+        })
+      ];
 
-      vi.mocked(mockHealthRepository.findOverdueVaccinations).mockResolvedValue([overdueRecord]);
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(null);
+      mockRepository.getOverdueVaccinations.mockResolvedValue(records);
 
       const result = await service.getHealthAlerts();
 
-      expect(result).toHaveLength(0); // Should skip records without alpacas
-    });
-  });
-
-  describe('getVaccinationSchedule', () => {
-    it('should return vaccination schedule for all alpacas', async () => {
-      const vaccinations = [mockHealthRecord];
-
-      vi.mocked(mockHealthRepository.findByRecordType).mockResolvedValue(vaccinations);
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(mockAlpaca);
-
-      const result = await service.getVaccinationSchedule();
-
-      expect(result).toHaveLength(1);
-      expect(result[0]).toMatchObject({
-        alpacaId: mockAlpaca.id,
-        alpacaName: mockAlpaca.name,
-        vaccinationType: mockHealthRecord.description,
-        lastVaccination: mockHealthRecord.date,
-        nextDueDate: mockHealthRecord.nextDueDate
-      });
+      expect(result).toHaveLength(4);
+      expect(result.find(r => r.id === 'low-1')?.priority).toBe('low');
+      expect(result.find(r => r.id === 'medium-1')?.priority).toBe('medium');
+      expect(result.find(r => r.id === 'high-1')?.priority).toBe('high');
+      expect(result.find(r => r.id === 'critical-1')?.priority).toBe('critical');
     });
 
-    it('should filter by alpaca ID when provided', async () => {
-      const vaccinations = [mockHealthRecord];
+    it('should handle empty overdue vaccinations', async () => {
+      mockRepository.getOverdueVaccinations.mockResolvedValue([]);
 
-      vi.mocked(mockHealthRepository.findByRecordType).mockResolvedValue(vaccinations);
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(mockAlpaca);
+      const result = await service.getHealthAlerts();
 
-      await service.getVaccinationSchedule('550e8400-e29b-41d4-a716-446655440000');
-
-      expect(mockHealthRepository.findByRecordType).toHaveBeenCalledWith('vaccination');
+      expect(result).toHaveLength(0);
     });
-  });
 
-  describe('getTreatmentSchedule', () => {
-    it('should return treatment schedule', async () => {
-      const treatmentRecord: HealthRecord = {
-        ...mockHealthRecord,
-        recordType: 'treatment',
-        description: 'Deworming'
-      };
+    it('should handle repository errors', async () => {
+      const repositoryError = new Error('Database connection failed');
+      mockRepository.getOverdueVaccinations.mockRejectedValue(repositoryError);
 
-      vi.mocked(mockHealthRepository.findByRecordType).mockResolvedValue([treatmentRecord]);
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(mockAlpaca);
-
-      const result = await service.getTreatmentSchedule();
-
-      expect(result).toHaveLength(1);
-      expect(result[0]).toMatchObject({
-        alpacaId: mockAlpaca.id,
-        alpacaName: mockAlpaca.name,
-        treatmentType: treatmentRecord.description,
-        lastTreatment: treatmentRecord.date
-      });
+      await expect(service.getHealthAlerts()).rejects.toThrow('Database connection failed');
     });
   });
 
   describe('getHealthSummary', () => {
     it('should return comprehensive health summary', async () => {
-      const futureDate = new Date();
-      futureDate.setFullYear(futureDate.getFullYear() + 1); // Next year
-      
-      const recentCheckupDate = new Date();
-      recentCheckupDate.setMonth(recentCheckupDate.getMonth() - 3); // 3 months ago
+      const now = new Date();
+      const futureDate = new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000); // 15 days from now
+      const recentCheckupDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000); // 3 months ago
+      const recentVaccinationDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); // 1 month ago
+      const recentTreatmentDate = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000); // 2 months ago
       
       const healthRecords = [
-        {
-          ...mockHealthRecord,
-          nextDueDate: futureDate // Not overdue
-        },
-        {
-          ...mockHealthRecord,
-          id: '550e8400-e29b-41d4-a716-446655440002',
-          recordType: 'checkup' as const,
-          description: 'Annual checkup',
+        HealthRecordFactory.create({
+          recordType: 'vaccination',
+          date: recentVaccinationDate,
+          nextDueDate: futureDate // Not overdue, upcoming
+        }),
+        HealthRecordFactory.create({
+          recordType: 'checkup',
           date: recentCheckupDate,
           nextDueDate: undefined
-        }
+        }),
+        HealthRecordFactory.create({
+          recordType: 'treatment',
+          date: recentTreatmentDate,
+          nextDueDate: undefined
+        })
       ];
 
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(mockAlpaca);
-      vi.mocked(mockHealthRepository.findByAlpaca).mockResolvedValue(healthRecords);
+      const paginatedRecords: PaginatedResult<HealthRecord> = {
+        data: healthRecords,
+        total: 3,
+        page: 1,
+        limit: 1000,
+        totalPages: 1
+      };
 
-      const result = await service.getHealthSummary('550e8400-e29b-41d4-a716-446655440000');
+      mockRepository.findByAlpaca.mockResolvedValue(paginatedRecords);
+
+      const result = await service.getHealthSummary('alpaca-1');
 
       expect(result).toMatchObject({
-        alpacaId: '550e8400-e29b-41d4-a716-446655440000',
-        totalRecords: 2,
-        overdueVaccinations: 0,
-        healthStatus: 'excellent'
+        alpacaId: 'alpaca-1',
+        totalRecords: 3,
+        upcomingVaccinations: 1, // One vaccination due within 30 days
+        overdueVaccinations: 0
       });
-      expect(result.lastVaccination).toEqual(mockHealthRecord.date);
+      expect(result.lastVaccination).toEqual(recentVaccinationDate);
       expect(result.lastCheckup).toEqual(recentCheckupDate);
+      expect(result.lastTreatment).toEqual(recentTreatmentDate);
     });
 
-    it('should throw error for non-existent alpaca', async () => {
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(null);
+    it('should throw error for empty alpaca ID', async () => {
+      await expect(service.getHealthSummary('')).rejects.toThrow('Alpaca ID is required');
+      expect(mockRepository.findByAlpaca).not.toHaveBeenCalled();
+    });
 
-      await expect(service.getHealthSummary('invalid-id'))
-        .rejects.toThrow('Alpaca not found');
+    it('should throw error for whitespace-only alpaca ID', async () => {
+      await expect(service.getHealthSummary('   ')).rejects.toThrow('Alpaca ID is required');
+      expect(mockRepository.findByAlpaca).not.toHaveBeenCalled();
+    });
+
+    it('should handle alpaca with no health records', async () => {
+      const emptyResult: PaginatedResult<HealthRecord> = {
+        data: [],
+        total: 0,
+        page: 1,
+        limit: 1000,
+        totalPages: 0
+      };
+
+      mockRepository.findByAlpaca.mockResolvedValue(emptyResult);
+
+      const result = await service.getHealthSummary('alpaca-1');
+
+      expect(result).toMatchObject({
+        alpacaId: 'alpaca-1',
+        totalRecords: 0,
+        upcomingVaccinations: 0,
+        overdueVaccinations: 0
+      });
+      expect(result.lastCheckup).toBeUndefined();
+      expect(result.lastVaccination).toBeUndefined();
+      expect(result.lastTreatment).toBeUndefined();
     });
 
     it('should detect overdue vaccinations in summary', async () => {
-      const overdueRecord: HealthRecord = {
-        ...mockHealthRecord,
-        nextDueDate: new Date('2022-01-01') // Overdue
+      const now = new Date();
+      const overdueRecord = HealthRecordFactory.create({
+        recordType: 'vaccination',
+        nextDueDate: new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000) // 10 days overdue
+      });
+
+      const paginatedRecords: PaginatedResult<HealthRecord> = {
+        data: [overdueRecord],
+        total: 1,
+        page: 1,
+        limit: 1000,
+        totalPages: 1
       };
 
-      vi.mocked(mockAlpacaRepository.findById).mockResolvedValue(mockAlpaca);
-      vi.mocked(mockHealthRepository.findByAlpaca).mockResolvedValue([overdueRecord]);
+      mockRepository.findByAlpaca.mockResolvedValue(paginatedRecords);
 
-      const result = await service.getHealthSummary('550e8400-e29b-41d4-a716-446655440000');
+      const result = await service.getHealthSummary('alpaca-1');
 
       expect(result.overdueVaccinations).toBe(1);
-      expect(result.healthStatus).toBe('needs_attention');
-    });
-  });
-
-  describe('scheduleNextDueDate', () => {
-    it('should successfully schedule next due date', async () => {
-      const nextDueDate = new Date('2024-06-01');
-      const updatedRecord = { ...mockHealthRecord, nextDueDate };
-
-      vi.mocked(mockHealthRepository.update).mockResolvedValue(updatedRecord);
-
-      const result = await service.scheduleNextDueDate('health-1', nextDueDate);
-
-      expect(result).toEqual(updatedRecord);
-      expect(mockHealthRepository.update).toHaveBeenCalledWith('health-1', { nextDueDate });
+      expect(result.upcomingVaccinations).toBe(0);
     });
 
-    it('should reject due dates too far in the future', async () => {
-      const farFutureDate = new Date();
-      farFutureDate.setFullYear(farFutureDate.getFullYear() + 10);
-
-      await expect(service.scheduleNextDueDate('health-1', farFutureDate))
-        .rejects.toThrow('Next due date cannot be more than 5 years in the future');
-    });
-  });
-
-  describe('removeHealthRecord', () => {
-    it('should successfully remove health record', async () => {
-      vi.mocked(mockHealthRepository.findById).mockResolvedValue(mockHealthRecord);
-      vi.mocked(mockHealthRepository.delete).mockResolvedValue(true);
-
-      const result = await service.removeHealthRecord('health-1');
-
-      expect(result).toBe(true);
-      expect(mockHealthRepository.delete).toHaveBeenCalledWith('health-1');
-    });
-
-    it('should return false for non-existent health record', async () => {
-      vi.mocked(mockHealthRepository.findById).mockResolvedValue(null);
-
-      const result = await service.removeHealthRecord('invalid-id');
-
-      expect(result).toBe(false);
-    });
-  });
-
-  describe('getUpcomingHealthEvents', () => {
-    it('should return upcoming health events within specified days', async () => {
-      const upcomingRecord: HealthRecord = {
-        ...mockHealthRecord,
-        nextDueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days from now
-      };
-
-      vi.mocked(mockHealthRepository.findAll).mockResolvedValue([upcomingRecord]);
-
-      const result = await service.getUpcomingHealthEvents(30);
-
-      expect(result).toHaveLength(1);
-      expect(result[0]).toEqual(upcomingRecord);
-    });
-
-    it('should validate days parameter', async () => {
-      await expect(service.getUpcomingHealthEvents(0))
-        .rejects.toThrow('Days must be between 1 and 365');
-
-      await expect(service.getUpcomingHealthEvents(400))
-        .rejects.toThrow('Days must be between 1 and 365');
-    });
-
-    it('should filter out records without due dates', async () => {
-      const recordWithoutDueDate: HealthRecord = {
-        ...mockHealthRecord,
-        nextDueDate: undefined
-      };
-
-      vi.mocked(mockHealthRepository.findAll).mockResolvedValue([recordWithoutDueDate]);
-
-      const result = await service.getUpcomingHealthEvents(30);
-
-      expect(result).toHaveLength(0);
-    });
-  });
-
-  describe('error handling', () => {
-    it('should wrap repository errors in service errors', async () => {
+    it('should handle repository errors', async () => {
       const repositoryError = new Error('Database connection failed');
-      vi.mocked(mockHealthRepository.findById).mockRejectedValue(repositoryError);
+      mockRepository.findByAlpaca.mockRejectedValue(repositoryError);
 
-      await expect(service.getHealthRecord('health-1'))
-        .rejects.toThrow(HealthServiceError);
+      await expect(service.getHealthSummary('alpaca-1')).rejects.toThrow('Database connection failed');
     });
   });
+
+
 });

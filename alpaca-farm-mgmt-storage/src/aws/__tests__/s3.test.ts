@@ -1,124 +1,110 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { S3BackupManager, createS3BackupManager, getS3BackupManager, resetS3BackupManager, S3BackupError } from '../s3';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { S3 } from 'aws-sdk';
+import { createReadStream, createWriteStream, promises as fs } from 'fs';
+import { createHash } from 'crypto';
+import {
+  S3BackupManager,
+  S3BackupError,
+  createS3BackupManager,
+  getS3BackupManager,
+  resetS3BackupManager,
+  S3BackupConfig,
+  BackupMetadata,
+  S3BackupInfo
+} from '../s3';
 import { AWSConfigManager } from '../config';
-import { promises as fs } from 'fs';
 
-// Mock AWS SDK and fs
-vi.mock('aws-sdk', () => ({
-  S3: vi.fn(() => ({
-    headBucket: vi.fn(() => ({
-      promise: vi.fn().mockResolvedValue({})
-    })),
-    putBucketLifecycleConfiguration: vi.fn(() => ({
-      promise: vi.fn().mockResolvedValue({})
-    })),
-    upload: vi.fn(() => ({
-      promise: vi.fn().mockResolvedValue({
-        ETag: '"mock-etag"',
-        Location: 'https://bucket.s3.amazonaws.com/key'
-      }),
-      on: vi.fn()
-    })),
-    getObject: vi.fn(() => ({
-      createReadStream: vi.fn(() => ({
-        pipe: vi.fn(),
-        on: vi.fn()
-      }))
-    })),
-    headObject: vi.fn(() => ({
-      promise: vi.fn().mockResolvedValue({
-        ContentLength: 1024,
-        Metadata: {
-          'backup-id': 'test-backup-123',
-          'backup-type': 'full',
-          'backup-timestamp': '2023-01-01T00:00:00.000Z',
-          'backup-checksum': 'mock-checksum',
-          'backup-description': 'Test backup'
-        }
-      })
-    })),
-    listObjectsV2: vi.fn(() => ({
-      promise: vi.fn().mockResolvedValue({
-        Contents: [
-          {
-            Key: 'alpaca-herd-backups/2023/01/01/test-backup-123.backup',
-            Size: 1024,
-            LastModified: new Date('2023-01-01T00:00:00.000Z'),
-            ETag: '"mock-etag"',
-            StorageClass: 'STANDARD'
-          }
-        ]
-      })
-    })),
-    deleteObject: vi.fn(() => ({
-      promise: vi.fn().mockResolvedValue({})
-    })),
-    deleteObjects: vi.fn(() => ({
-      promise: vi.fn().mockResolvedValue({
-        Deleted: [{ Key: 'test-key' }],
-        Errors: []
-      })
-    }))
-  }))
-}));
-
+// Mock fs module
 vi.mock('fs', () => ({
-  createReadStream: vi.fn(() => ({
-    on: vi.fn(),
-    pipe: vi.fn()
-  })),
-  createWriteStream: vi.fn(() => ({
-    on: vi.fn()
-  })),
+  createReadStream: vi.fn(),
+  createWriteStream: vi.fn(),
   promises: {
-    stat: vi.fn().mockResolvedValue({ size: 1024 }),
-    mkdir: vi.fn().mockResolvedValue(undefined)
+    stat: vi.fn(),
+    mkdir: vi.fn()
   }
 }));
 
+// Mock crypto module
 vi.mock('crypto', () => ({
-  createHash: vi.fn(() => ({
-    update: vi.fn(),
-    digest: vi.fn().mockReturnValue('mock-checksum')
-  }))
+  createHash: vi.fn()
+}));
+
+// Mock AWS SDK
+vi.mock('aws-sdk', () => ({
+  S3: vi.fn()
+}));
+
+// Mock config module
+vi.mock('../config', () => ({
+  getAWSConfigManager: vi.fn(),
+  AWSConfigManager: vi.fn()
 }));
 
 describe('S3BackupManager', () => {
-  let mockConfigManager: AWSConfigManager;
-  let s3BackupManager: S3BackupManager;
+  let s3Manager: S3BackupManager;
+  let mockS3: any;
+  let mockConfigManager: any;
+  let mockConfig: S3BackupConfig;
+  let mockUpload: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    resetS3BackupManager();
 
-    mockConfigManager = {
-      getConfig: vi.fn().mockReturnValue({
-        region: 'us-east-1',
-        s3: {
-          bucketName: 'test-backup-bucket',
-          region: 'us-east-1',
-          backupPrefix: 'alpaca-herd-backups',
-          serverSideEncryption: 'AES256',
-          storageClass: 'STANDARD',
-          lifecycleRules: [
-            {
-              id: 'backup-lifecycle',
-              status: 'Enabled',
-              prefix: 'alpaca-herd-backups/',
-              transitions: [
-                { days: 30, storageClass: 'STANDARD_IA' },
-                { days: 90, storageClass: 'GLACIER' }
-              ],
-              expiration: { days: 365 }
-            }
-          ]
-        }
+    // Setup mock S3
+    mockUpload = {
+      promise: vi.fn(),
+      on: vi.fn()
+    };
+    mockS3 = {
+      headBucket: vi.fn().mockReturnValue({
+        promise: vi.fn()
       }),
-      isInitialized: vi.fn().mockReturnValue(true),
-      initialize: vi.fn().mockResolvedValue(undefined)
-    } as any;
+      upload: vi.fn().mockReturnValue(mockUpload),
+      getObject: vi.fn(),
+      listObjectsV2: vi.fn().mockReturnValue({
+        promise: vi.fn()
+      }),
+      headObject: vi.fn().mockReturnValue({
+        promise: vi.fn()
+      }),
+      deleteObject: vi.fn().mockReturnValue({
+        promise: vi.fn()
+      }),
+      deleteObjects: vi.fn().mockReturnValue({
+        promise: vi.fn()
+      }),
+      putBucketLifecycleConfiguration: vi.fn().mockReturnValue({
+        promise: vi.fn()
+      })
+    };
+    (S3 as any).mockImplementation(() => mockS3);
 
-    s3BackupManager = new S3BackupManager(undefined, mockConfigManager);
+    // Setup mock config manager
+    mockConfigManager = {
+      getConfig: vi.fn(),
+      isInitialized: vi.fn().mockReturnValue(true),
+      initialize: vi.fn()
+    };
+    (AWSConfigManager as any).mockImplementation(() => mockConfigManager);
+
+    // Default S3 config
+    mockConfig = {
+      bucketName: 'test-backup-bucket',
+      region: 'us-east-1',
+      backupPrefix: 'test-backups',
+      serverSideEncryption: 'AES256',
+      storageClass: 'STANDARD',
+      lifecycleRules: [],
+      maxRetries: 3,
+      retryDelay: 1000
+    };
+
+    mockConfigManager.getConfig.mockReturnValue({
+      region: 'us-east-1',
+      s3: mockConfig
+    });
+
+    resetS3BackupManager();
   });
 
   afterEach(() => {
@@ -126,496 +112,705 @@ describe('S3BackupManager', () => {
   });
 
   describe('constructor', () => {
-    it('should create S3 backup manager with provided config', () => {
-      const config = {
-        bucketName: 'custom-bucket',
-        region: 'us-west-2',
-        backupPrefix: 'custom-backups',
-        serverSideEncryption: 'aws:kms' as const,
-        kmsKeyId: 'custom-key-id',
-        storageClass: 'STANDARD_IA' as const,
-        lifecycleRules: [],
-        maxRetries: 5,
-        retryDelay: 2000
-      };
-
-      const manager = new S3BackupManager(config, mockConfigManager);
-      expect(manager.getConfig()).toEqual(config);
+    it('should create instance with provided config', () => {
+      s3Manager = new S3BackupManager(mockConfig, mockConfigManager);
+      
+      expect(s3Manager.getConfig()).toEqual(mockConfig);
+      expect(S3).toHaveBeenCalledWith({
+        region: 'us-east-1',
+        maxRetries: 3,
+        retryDelayOptions: { base: 1000 }
+      });
     });
 
-    it('should load config from AWS config manager when no config provided', () => {
-      const manager = new S3BackupManager(undefined, mockConfigManager);
-      const config = manager.getConfig();
-
-      expect(config.bucketName).toBe('test-backup-bucket');
-      expect(config.region).toBe('us-east-1');
-      expect(config.backupPrefix).toBe('alpaca-herd-backups');
+    it('should load config from AWS config manager when not provided', () => {
+      s3Manager = new S3BackupManager(undefined, mockConfigManager);
+      
+      expect(mockConfigManager.getConfig).toHaveBeenCalled();
+      expect(s3Manager.getConfig()).toEqual(expect.objectContaining({
+        bucketName: 'test-backup-bucket',
+        region: 'us-east-1'
+      }));
     });
 
     it('should throw error when S3 config not found in AWS config', () => {
-      const mockConfigManagerNoS3 = {
-        getConfig: vi.fn().mockReturnValue({
-          region: 'us-east-1'
-          // No s3 config
-        })
-      } as any;
-
-      expect(() => new S3BackupManager(undefined, mockConfigManagerNoS3)).toThrow('S3 configuration not found in AWS config');
+      mockConfigManager.getConfig.mockReturnValue({ region: 'us-east-1' });
+      
+      expect(() => new S3BackupManager(undefined, mockConfigManager)).toThrow(S3BackupError);
+      expect(() => new S3BackupManager(undefined, mockConfigManager)).toThrow('S3 configuration not found');
     });
   });
 
   describe('initialize', () => {
-    it('should initialize S3 backup manager successfully', async () => {
-      // Mock isInitialized to return false so initialize gets called
-      vi.mocked(mockConfigManager.isInitialized).mockReturnValue(false);
-      
-      await s3BackupManager.initialize();
+    beforeEach(() => {
+      s3Manager = new S3BackupManager(mockConfig, mockConfigManager);
+    });
+
+    it('should initialize successfully with accessible bucket', async () => {
+      mockS3.headBucket.mockResolvedValue({});
+      mockS3.putBucketLifecycleConfiguration.mockResolvedValue({});
+
+      await s3Manager.initialize();
 
       expect(mockConfigManager.initialize).toHaveBeenCalled();
-    });
-
-    it('should throw error when bucket not found', async () => {
-      const mockS3 = vi.mocked(s3BackupManager as any).s3;
-      mockS3.headBucket = vi.fn(() => ({
-        promise: vi.fn().mockRejectedValue({ code: 'NotFound' })
-      }));
-
-      await expect(s3BackupManager.initialize()).rejects.toThrow("S3 bucket 'test-backup-bucket' not found");
-    });
-
-    it('should throw error when access denied', async () => {
-      const mockS3 = vi.mocked(s3BackupManager as any).s3;
-      mockS3.headBucket = vi.fn(() => ({
-        promise: vi.fn().mockRejectedValue({ code: 'Forbidden' })
-      }));
-
-      await expect(s3BackupManager.initialize()).rejects.toThrow("Access denied to S3 bucket 'test-backup-bucket'");
+      expect(mockS3.headBucket).toHaveBeenCalledWith({ Bucket: 'test-backup-bucket' });
     });
 
     it('should setup lifecycle rules when configured', async () => {
-      const mockS3 = vi.mocked(s3BackupManager as any).s3;
-      
-      await s3BackupManager.initialize();
+      const configWithRules = {
+        ...mockConfig,
+        lifecycleRules: [{
+          id: 'test-rule',
+          status: 'Enabled' as const,
+          prefix: 'test/',
+          transitions: [{ days: 30, storageClass: 'GLACIER' as const }],
+          expiration: { days: 365 }
+        }]
+      };
+      s3Manager = new S3BackupManager(configWithRules, mockConfigManager);
+
+      mockS3.headBucket.mockResolvedValue({});
+      mockS3.putBucketLifecycleConfiguration.mockResolvedValue({});
+
+      await s3Manager.initialize();
 
       expect(mockS3.putBucketLifecycleConfiguration).toHaveBeenCalledWith({
         Bucket: 'test-backup-bucket',
         LifecycleConfiguration: {
-          Rules: [
-            {
-              ID: 'backup-lifecycle',
-              Status: 'Enabled',
-              Filter: { Prefix: 'alpaca-herd-backups/' },
-              Transitions: [
-                { Days: 30, StorageClass: 'STANDARD_IA' },
-                { Days: 90, StorageClass: 'GLACIER' }
-              ],
-              Expiration: { Days: 365 }
-            }
-          ]
+          Rules: [{
+            ID: 'test-rule',
+            Status: 'Enabled',
+            Filter: { Prefix: 'test/' },
+            Transitions: [{ Days: 30, StorageClass: 'GLACIER' }],
+            Expiration: { Days: 365 }
+          }]
         }
       });
+    });
+
+    it('should throw error when bucket not found', async () => {
+      mockS3.headBucket.mockRejectedValue({ code: 'NotFound' });
+
+      await expect(s3Manager.initialize()).rejects.toThrow(S3BackupError);
+      await expect(s3Manager.initialize()).rejects.toThrow("S3 bucket 'test-backup-bucket' not found");
+    });
+
+    it('should throw error when access denied', async () => {
+      mockS3.headBucket.mockRejectedValue({ code: 'Forbidden' });
+
+      await expect(s3Manager.initialize()).rejects.toThrow(S3BackupError);
+      await expect(s3Manager.initialize()).rejects.toThrow("Access denied to S3 bucket 'test-backup-bucket'");
+    });
+
+    it('should handle lifecycle rule setup failure gracefully', async () => {
+      const configWithRules = {
+        ...mockConfig,
+        lifecycleRules: [{ id: 'test-rule', status: 'Enabled' as const }]
+      };
+      s3Manager = new S3BackupManager(configWithRules, mockConfigManager);
+
+      mockS3.headBucket.mockResolvedValue({});
+      mockS3.putBucketLifecycleConfiguration.mockRejectedValue(new Error('Lifecycle error'));
+
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await s3Manager.initialize();
+
+      expect(consoleSpy).toHaveBeenCalledWith('Failed to setup lifecycle rules:', expect.any(Error));
+      consoleSpy.mockRestore();
     });
   });
 
   describe('uploadBackup', () => {
+    beforeEach(() => {
+      s3Manager = new S3BackupManager(mockConfig, mockConfigManager);
+    });
+
     it('should upload backup successfully', async () => {
-      const timestamp = new Date('2023-01-01T00:00:00.000Z');
-      const metadata = {
-        backupId: 'test-backup-123',
-        timestamp,
-        type: 'full' as const,
+      const filePath = '/path/to/backup.sql';
+      const metadata: Omit<BackupMetadata, 'size' | 'checksum'> = {
+        backupId: 'backup-123',
+        timestamp: new Date('2023-01-01T00:00:00Z'),
+        type: 'full',
         description: 'Test backup'
       };
 
-      // Mock the upload method to avoid complex stream handling
-      vi.spyOn(s3BackupManager as any, 'calculateFileChecksum').mockResolvedValue('mock-checksum');
+      // Mock file operations
+      (fs.stat as any).mockResolvedValue({ size: 1024 });
+      const mockHash = { update: vi.fn(), digest: vi.fn().mockReturnValue('abc123') };
+      (createHash as any).mockReturnValue(mockHash);
+      const mockReadStream = { on: vi.fn() };
+      (createReadStream as any).mockReturnValue(mockReadStream);
 
-      const result = await s3BackupManager.uploadBackup('/path/to/backup.sql', metadata);
+      mockUpload.promise.mockResolvedValue({ ETag: 'etag123' });
 
-      // The key should be based on the timestamp
-      expect(result.key).toContain('test-backup-123.backup');
-      expect(result.size).toBe(1024);
-      expect(result.etag).toBe('"mock-etag"');
-      expect(result.metadata.backupId).toBe('test-backup-123');
+      const result = await s3Manager.uploadBackup(filePath, metadata);
+
+      expect(fs.stat).toHaveBeenCalledWith(filePath);
+      expect(createReadStream).toHaveBeenCalledWith(filePath);
+      expect(mockS3.upload).toHaveBeenCalledWith({
+        Bucket: 'test-backup-bucket',
+        Key: 'test-backups/2023/01/01/backup-123.backup',
+        Body: mockReadStream,
+        ContentLength: 1024,
+        StorageClass: 'STANDARD',
+        ServerSideEncryption: 'AES256',
+        KMSKeyId: undefined,
+        Metadata: expect.objectContaining({
+          'backup-id': 'backup-123',
+          'backup-type': 'full',
+          'backup-timestamp': '2023-01-01T00:00:00.000Z',
+          'backup-checksum': 'abc123',
+          'backup-description': 'Test backup'
+        }),
+        Tagging: expect.stringContaining('BackupId=backup-123')
+      });
+
+      expect(result).toEqual({
+        key: 'test-backups/2023/01/01/backup-123.backup',
+        size: 1024,
+        lastModified: expect.any(Date),
+        etag: 'etag123',
+        storageClass: 'STANDARD',
+        metadata: expect.objectContaining({
+          backupId: 'backup-123',
+          type: 'full',
+          size: 1024,
+          checksum: 'abc123'
+        })
+      });
     });
 
-    it('should handle upload errors', async () => {
-      // Mock fs.stat to throw an error
-      const { promises: fs } = await import('fs');
-      vi.mocked(fs.stat).mockRejectedValue(new Error('File not found'));
-
-      const metadata = {
-        backupId: 'test-backup-123',
+    it('should handle upload progress tracking', async () => {
+      const filePath = '/path/to/backup.sql';
+      const metadata: Omit<BackupMetadata, 'size' | 'checksum'> = {
+        backupId: 'backup-123',
         timestamp: new Date(),
-        type: 'full' as const
+        type: 'full'
       };
+      const onProgress = vi.fn();
 
-      await expect(s3BackupManager.uploadBackup('/path/to/backup.sql', metadata))
-        .rejects.toThrow('Failed to upload backup');
+      (fs.stat as any).mockResolvedValue({ size: 1000 });
+      const mockHash = { update: vi.fn(), digest: vi.fn().mockReturnValue('abc123') };
+      (createHash as any).mockReturnValue(mockHash);
+      (createReadStream as any).mockReturnValue({ on: vi.fn() });
+
+      mockUpload.on.mockImplementation((event, callback) => {
+        if (event === 'httpUploadProgress') {
+          callback({ loaded: 500, total: 1000 });
+        }
+        return mockUpload;
+      });
+      mockUpload.promise.mockResolvedValue({ ETag: 'etag123' });
+
+      await s3Manager.uploadBackup(filePath, metadata, onProgress);
+
+      expect(onProgress).toHaveBeenCalledWith({
+        loaded: 500,
+        total: 1000,
+        percentage: 50
+      });
     });
 
-    it('should track upload progress', async () => {
-      // Reset fs.stat mock to return success
-      const { promises: fs } = await import('fs');
-      vi.mocked(fs.stat).mockResolvedValue({ size: 1024 } as any);
-
-      const mockS3 = vi.mocked(s3BackupManager as any).s3;
-      const mockUpload = {
-        promise: vi.fn().mockResolvedValue({ ETag: '"mock-etag"' }),
-        on: vi.fn()
-      };
-      mockS3.upload = vi.fn(() => mockUpload);
-
-      // Mock checksum calculation
-      vi.spyOn(s3BackupManager as any, 'calculateFileChecksum').mockResolvedValue('mock-checksum');
-
-      const metadata = {
-        backupId: 'test-backup-123',
+    it('should handle upload failure', async () => {
+      const filePath = '/path/to/backup.sql';
+      const metadata: Omit<BackupMetadata, 'size' | 'checksum'> = {
+        backupId: 'backup-123',
         timestamp: new Date(),
-        type: 'full' as const
+        type: 'full'
       };
 
-      const mockProgress = vi.fn();
-      await s3BackupManager.uploadBackup('/path/to/backup.sql', metadata, mockProgress);
+      (fs.stat as any).mockResolvedValue({ size: 1024 });
+      const mockHash = { update: vi.fn(), digest: vi.fn().mockReturnValue('abc123') };
+      (createHash as any).mockReturnValue(mockHash);
+      (createReadStream as any).mockReturnValue({ on: vi.fn() });
 
-      expect(mockUpload.on).toHaveBeenCalledWith('httpUploadProgress', expect.any(Function));
+      mockUpload.promise.mockRejectedValue(new Error('Upload failed'));
+
+      await expect(s3Manager.uploadBackup(filePath, metadata)).rejects.toThrow(S3BackupError);
+      await expect(s3Manager.uploadBackup(filePath, metadata)).rejects.toThrow('Failed to upload backup');
     });
   });
 
   describe('downloadBackup', () => {
+    beforeEach(() => {
+      s3Manager = new S3BackupManager(mockConfig, mockConfigManager);
+    });
+
     it('should download backup successfully', async () => {
-      // Mock the checksum calculation to match
-      vi.spyOn(s3BackupManager as any, 'calculateFileChecksum').mockResolvedValue('mock-checksum');
+      const key = 'test-backups/2023/01/01/backup-123.backup';
+      const localPath = '/local/path/backup.sql';
 
-      // Mock stream handling by directly calling the callback
-      const mockStream = {
-        pipe: vi.fn((writeStream) => {
-          // Simulate successful pipe
-          setTimeout(() => writeStream.emit('finish'), 0);
-          return writeStream;
-        }),
+      mockS3.headObject.mockResolvedValue({
+        ContentLength: 1024,
+        Metadata: {
+          'backup-id': 'backup-123',
+          'backup-type': 'full',
+          'backup-timestamp': '2023-01-01T00:00:00.000Z',
+          'backup-checksum': 'abc123',
+          'backup-size': '1024'
+        }
+      });
+
+      const mockDownloadStream = {
+        pipe: vi.fn(),
         on: vi.fn()
       };
-      
-      const mockS3 = vi.mocked(s3BackupManager as any).s3;
-      mockS3.getObject = vi.fn(() => ({
-        createReadStream: vi.fn(() => mockStream)
-      }));
+      mockS3.getObject.mockReturnValue({
+        createReadStream: vi.fn().mockReturnValue(mockDownloadStream)
+      });
 
       const mockWriteStream = {
-        on: vi.fn((event, callback) => {
-          if (event === 'finish') {
-            setTimeout(callback, 0);
-          }
-        }),
-        emit: vi.fn()
-      };
-
-      const { createWriteStream } = await import('fs');
-      vi.mocked(createWriteStream).mockReturnValue(mockWriteStream as any);
-
-      const result = await s3BackupManager.downloadBackup(
-        'alpaca-herd-backups/2023/01/01/test-backup-123.backup',
-        '/path/to/download.sql'
-      );
-
-      expect(result.backupId).toBe('test-backup-123');
-      expect(result.checksum).toBe('mock-checksum');
-    });
-
-    it('should handle download errors', async () => {
-      const mockS3 = vi.mocked(s3BackupManager as any).s3;
-      mockS3.headObject = vi.fn(() => ({
-        promise: vi.fn().mockRejectedValue(new Error('Object not found'))
-      }));
-
-      await expect(s3BackupManager.downloadBackup('invalid-key', '/path/to/download.sql'))
-        .rejects.toThrow('Failed to download backup: Object not found');
-    });
-
-    it('should verify checksum after download', async () => {
-      // Mock different checksum to trigger mismatch
-      vi.spyOn(s3BackupManager as any, 'calculateFileChecksum').mockResolvedValue('different-checksum');
-
-      const mockS3 = vi.mocked(s3BackupManager as any).s3;
-      mockS3.headObject = vi.fn(() => ({
-        promise: vi.fn().mockResolvedValue({
-          ContentLength: 1024,
-          Metadata: {
-            'backup-id': 'test-backup-123',
-            'backup-type': 'full',
-            'backup-timestamp': '2023-01-01T00:00:00.000Z',
-            'backup-checksum': 'expected-checksum'
-          }
-        })
-      }));
-
-      const mockStream = {
-        pipe: vi.fn((writeStream) => {
-          setTimeout(() => writeStream.emit('finish'), 0);
-          return writeStream;
-        }),
         on: vi.fn()
       };
-      
-      mockS3.getObject = vi.fn(() => ({
-        createReadStream: vi.fn(() => mockStream)
-      }));
+      (createWriteStream as any).mockReturnValue(mockWriteStream);
+      (fs.mkdir as any).mockResolvedValue(undefined);
 
-      const mockWriteStream = {
-        on: vi.fn((event, callback) => {
-          if (event === 'finish') setTimeout(callback, 0);
-        }),
-        emit: vi.fn()
-      };
+      // Mock checksum calculation
+      const mockHash = { update: vi.fn(), digest: vi.fn().mockReturnValue('abc123') };
+      (createHash as any).mockReturnValue(mockHash);
+      const mockReadStream = { on: vi.fn() };
+      (createReadStream as any).mockReturnValue(mockReadStream);
 
-      const { createWriteStream } = await import('fs');
-      vi.mocked(createWriteStream).mockReturnValue(mockWriteStream as any);
+      // Simulate successful download
+      mockDownloadStream.pipe.mockImplementation((writeStream) => {
+        setTimeout(() => writeStream.on.mock.calls.find(call => call[0] === 'finish')?.[1](), 0);
+        return writeStream;
+      });
 
-      await expect(s3BackupManager.downloadBackup('test-key', '/path/to/download.sql'))
-        .rejects.toThrow('Downloaded file checksum mismatch');
+      const result = await s3Manager.downloadBackup(key, localPath);
+
+      expect(mockS3.headObject).toHaveBeenCalledWith({
+        Bucket: 'test-backup-bucket',
+        Key: key
+      });
+      expect(fs.mkdir).toHaveBeenCalledWith('/local/path', { recursive: true });
+      expect(result).toEqual({
+        backupId: 'backup-123',
+        timestamp: new Date('2023-01-01T00:00:00.000Z'),
+        type: 'full',
+        size: 1024,
+        checksum: 'abc123'
+      });
+    });
+
+    it('should handle checksum mismatch', async () => {
+      const key = 'test-backups/backup-123.backup';
+      const localPath = '/local/path/backup.sql';
+
+      mockS3.headObject.mockResolvedValue({
+        ContentLength: 1024,
+        Metadata: {
+          'backup-id': 'backup-123',
+          'backup-checksum': 'expected-checksum'
+        }
+      });
+
+      const mockDownloadStream = { pipe: vi.fn(), on: vi.fn() };
+      mockS3.getObject.mockReturnValue({
+        createReadStream: vi.fn().mockReturnValue(mockDownloadStream)
+      });
+
+      const mockWriteStream = { on: vi.fn() };
+      (createWriteStream as any).mockReturnValue(mockWriteStream);
+      (fs.mkdir as any).mockResolvedValue(undefined);
+
+      // Mock checksum calculation with different result
+      const mockHash = { update: vi.fn(), digest: vi.fn().mockReturnValue('actual-checksum') };
+      (createHash as any).mockReturnValue(mockHash);
+      (createReadStream as any).mockReturnValue({ on: vi.fn() });
+
+      mockDownloadStream.pipe.mockImplementation((writeStream) => {
+        setTimeout(() => writeStream.on.mock.calls.find(call => call[0] === 'finish')?.[1](), 0);
+        return writeStream;
+      });
+
+      await expect(s3Manager.downloadBackup(key, localPath)).rejects.toThrow(S3BackupError);
+      await expect(s3Manager.downloadBackup(key, localPath)).rejects.toThrow('Downloaded file checksum mismatch');
+    });
+
+    it('should handle download failure', async () => {
+      const key = 'test-backups/backup-123.backup';
+      const localPath = '/local/path/backup.sql';
+
+      mockS3.headObject.mockRejectedValue(new Error('Object not found'));
+
+      await expect(s3Manager.downloadBackup(key, localPath)).rejects.toThrow(S3BackupError);
+      await expect(s3Manager.downloadBackup(key, localPath)).rejects.toThrow('Failed to download backup');
     });
   });
 
   describe('listBackups', () => {
-    it('should list backups successfully', async () => {
-      const backups = await s3BackupManager.listBackups();
+    beforeEach(() => {
+      s3Manager = new S3BackupManager(mockConfig, mockConfigManager);
+    });
 
-      expect(backups).toHaveLength(1);
-      expect(backups[0]).toEqual({
-        key: 'alpaca-herd-backups/2023/01/01/test-backup-123.backup',
-        size: 1024,
-        lastModified: new Date('2023-01-01T00:00:00.000Z'),
-        etag: '"mock-etag"',
-        storageClass: 'STANDARD',
+    it('should list backups successfully', async () => {
+      const mockObjects = [
+        {
+          Key: 'test-backups/2023/01/01/backup-1.backup',
+          Size: 1024,
+          LastModified: new Date('2023-01-01'),
+          ETag: 'etag1',
+          StorageClass: 'STANDARD'
+        },
+        {
+          Key: 'test-backups/2023/01/02/backup-2.backup',
+          Size: 2048,
+          LastModified: new Date('2023-01-02'),
+          ETag: 'etag2',
+          StorageClass: 'GLACIER'
+        }
+      ];
+
+      mockS3.listObjectsV2.mockResolvedValue({ Contents: mockObjects });
+      mockS3.headObject
+        .mockResolvedValueOnce({
+          Metadata: {
+            'backup-id': 'backup-1',
+            'backup-type': 'full',
+            'backup-timestamp': '2023-01-01T00:00:00.000Z',
+            'backup-checksum': 'checksum1',
+            'backup-size': '1024'
+          }
+        })
+        .mockResolvedValueOnce({
+          Metadata: {
+            'backup-id': 'backup-2',
+            'backup-type': 'incremental',
+            'backup-timestamp': '2023-01-02T00:00:00.000Z',
+            'backup-checksum': 'checksum2',
+            'backup-size': '2048'
+          }
+        });
+
+      const result = await s3Manager.listBackups();
+
+      expect(mockS3.listObjectsV2).toHaveBeenCalledWith({
+        Bucket: 'test-backup-bucket',
+        Prefix: 'test-backups',
+        MaxKeys: 1000
+      });
+
+      expect(result).toHaveLength(2);
+      expect(result[0]).toEqual({
+        key: 'test-backups/2023/01/02/backup-2.backup',
+        size: 2048,
+        lastModified: new Date('2023-01-02'),
+        etag: 'etag2',
+        storageClass: 'GLACIER',
         metadata: {
-          backupId: 'test-backup-123',
-          timestamp: new Date('2023-01-01T00:00:00.000Z'),
-          type: 'full',
-          size: 0,
-          checksum: 'mock-checksum',
-          description: 'Test backup'
+          backupId: 'backup-2',
+          timestamp: new Date('2023-01-02T00:00:00.000Z'),
+          type: 'incremental',
+          size: 2048,
+          checksum: 'checksum2'
         }
       });
     });
 
-    it('should handle list errors', async () => {
-      const mockS3 = vi.mocked(s3BackupManager as any).s3;
-      mockS3.listObjectsV2 = vi.fn(() => ({
-        promise: vi.fn().mockRejectedValue(new Error('List failed'))
-      }));
+    it('should handle empty backup list', async () => {
+      mockS3.listObjectsV2.mockResolvedValue({ Contents: [] });
 
-      await expect(s3BackupManager.listBackups()).rejects.toThrow('Failed to list backups: List failed');
+      const result = await s3Manager.listBackups();
+
+      expect(result).toHaveLength(0);
     });
 
-    it('should sort backups by timestamp', async () => {
-      const mockS3 = vi.mocked(s3BackupManager as any).s3;
-      mockS3.listObjectsV2 = vi.fn(() => ({
-        promise: vi.fn().mockResolvedValue({
-          Contents: [
-            { Key: 'backup1', Size: 100, LastModified: new Date('2023-01-01') },
-            { Key: 'backup2', Size: 200, LastModified: new Date('2023-01-02') }
-          ]
-        })
-      }));
+    it('should handle metadata retrieval errors gracefully', async () => {
+      const mockObjects = [{
+        Key: 'test-backups/backup-1.backup',
+        Size: 1024,
+        LastModified: new Date('2023-01-01'),
+        ETag: 'etag1'
+      }];
 
-      // Mock headObject to return different timestamps with promise chain
-      mockS3.headObject = vi.fn()
-        .mockReturnValueOnce({
-          promise: vi.fn().mockResolvedValue({
-            ContentLength: 100,
-            Metadata: {
-              'backup-id': 'backup1',
-              'backup-type': 'full',
-              'backup-timestamp': '2023-01-01T00:00:00.000Z',
-              'backup-checksum': 'checksum1'
-            }
-          })
-        })
-        .mockReturnValueOnce({
-          promise: vi.fn().mockResolvedValue({
-            ContentLength: 200,
-            Metadata: {
-              'backup-id': 'backup2',
-              'backup-type': 'full',
-              'backup-timestamp': '2023-01-02T00:00:00.000Z',
-              'backup-checksum': 'checksum2'
-            }
-          })
-        });
+      mockS3.listObjectsV2.mockResolvedValue({ Contents: mockObjects });
+      mockS3.headObject.mockRejectedValue(new Error('Metadata error'));
 
-      const backups = await s3BackupManager.listBackups();
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-      expect(backups).toHaveLength(2);
-      expect(backups[0].metadata.backupId).toBe('backup2'); // Newer first
-      expect(backups[1].metadata.backupId).toBe('backup1');
+      const result = await s3Manager.listBackups();
+
+      expect(result).toHaveLength(0);
+      expect(consoleSpy).toHaveBeenCalledWith(
+        'Failed to get metadata for test-backups/backup-1.backup:',
+        expect.any(Error)
+      );
+      consoleSpy.mockRestore();
     });
   });
 
   describe('deleteBackup', () => {
-    it('should delete single backup successfully', async () => {
-      await s3BackupManager.deleteBackup('test-key');
+    beforeEach(() => {
+      s3Manager = new S3BackupManager(mockConfig, mockConfigManager);
+    });
 
-      const mockS3 = vi.mocked(s3BackupManager as any).s3;
+    it('should delete backup successfully', async () => {
+      const key = 'test-backups/backup-123.backup';
+      mockS3.deleteObject.mockResolvedValue({});
+
+      await s3Manager.deleteBackup(key);
+
       expect(mockS3.deleteObject).toHaveBeenCalledWith({
         Bucket: 'test-backup-bucket',
-        Key: 'test-key'
+        Key: key
       });
     });
 
-    it('should handle delete errors', async () => {
-      const mockS3 = vi.mocked(s3BackupManager as any).s3;
-      mockS3.deleteObject = vi.fn(() => ({
-        promise: vi.fn().mockRejectedValue(new Error('Delete failed'))
-      }));
+    it('should handle delete failure', async () => {
+      const key = 'test-backups/backup-123.backup';
+      mockS3.deleteObject.mockRejectedValue(new Error('Delete failed'));
 
-      await expect(s3BackupManager.deleteBackup('test-key'))
-        .rejects.toThrow('Failed to delete backup: Delete failed');
+      await expect(s3Manager.deleteBackup(key)).rejects.toThrow(S3BackupError);
+      await expect(s3Manager.deleteBackup(key)).rejects.toThrow('Failed to delete backup');
     });
   });
 
   describe('deleteBackups', () => {
-    it('should delete multiple backups successfully', async () => {
-      const result = await s3BackupManager.deleteBackups(['key1', 'key2']);
-
-      expect(result.deleted).toEqual(['test-key']);
-      expect(result.errors).toEqual([]);
+    beforeEach(() => {
+      s3Manager = new S3BackupManager(mockConfig, mockConfigManager);
     });
 
-    it('should handle batch delete errors', async () => {
-      const mockS3 = vi.mocked(s3BackupManager as any).s3;
-      mockS3.deleteObjects = vi.fn(() => ({
-        promise: vi.fn().mockResolvedValue({
-          Deleted: [{ Key: 'key1' }],
-          Errors: [{ Key: 'key2', Message: 'Access denied' }]
-        })
-      }));
+    it('should delete multiple backups successfully', async () => {
+      const keys = ['backup-1.backup', 'backup-2.backup'];
+      
+      mockS3.deleteObjects.mockResolvedValue({
+        Deleted: [{ Key: 'backup-1.backup' }, { Key: 'backup-2.backup' }],
+        Errors: []
+      });
 
-      const result = await s3BackupManager.deleteBackups(['key1', 'key2']);
+      const result = await s3Manager.deleteBackups(keys);
 
-      expect(result.deleted).toEqual(['key1']);
-      expect(result.errors).toEqual([{ key: 'key2', error: 'Access denied' }]);
+      expect(mockS3.deleteObjects).toHaveBeenCalledWith({
+        Bucket: 'test-backup-bucket',
+        Delete: {
+          Objects: [{ Key: 'backup-1.backup' }, { Key: 'backup-2.backup' }],
+          Quiet: false
+        }
+      });
+
+      expect(result.deleted).toEqual(['backup-1.backup', 'backup-2.backup']);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('should handle partial deletion failures', async () => {
+      const keys = ['backup-1.backup', 'backup-2.backup'];
+      
+      mockS3.deleteObjects.mockResolvedValue({
+        Deleted: [{ Key: 'backup-1.backup' }],
+        Errors: [{ Key: 'backup-2.backup', Message: 'Access denied' }]
+      });
+
+      const result = await s3Manager.deleteBackups(keys);
+
+      expect(result.deleted).toEqual(['backup-1.backup']);
+      expect(result.errors).toEqual([{
+        key: 'backup-2.backup',
+        error: 'Access denied'
+      }]);
+    });
+
+    it('should return empty result for empty key list', async () => {
+      const result = await s3Manager.deleteBackups([]);
+
+      expect(result.deleted).toHaveLength(0);
+      expect(result.errors).toHaveLength(0);
+      expect(mockS3.deleteObjects).not.toHaveBeenCalled();
     });
 
     it('should fallback to individual deletes on batch failure', async () => {
-      const mockS3 = vi.mocked(s3BackupManager as any).s3;
-      mockS3.deleteObjects = vi.fn(() => ({
-        promise: vi.fn().mockRejectedValue(new Error('Batch delete failed'))
-      }));
-      mockS3.deleteObject = vi.fn(() => ({
-        promise: vi.fn().mockResolvedValue({})
-      }));
+      const keys = ['backup-1.backup', 'backup-2.backup'];
+      
+      mockS3.deleteObjects.mockRejectedValue(new Error('Batch delete failed'));
+      mockS3.deleteObject
+        .mockResolvedValueOnce({})
+        .mockRejectedValueOnce(new Error('Individual delete failed'));
 
-      const result = await s3BackupManager.deleteBackups(['key1', 'key2']);
+      const result = await s3Manager.deleteBackups(keys);
 
-      expect(result.deleted).toEqual(['key1', 'key2']);
-      expect(mockS3.deleteObject).toHaveBeenCalledTimes(2);
+      expect(result.deleted).toEqual(['backup-1.backup']);
+      expect(result.errors).toEqual([{
+        key: 'backup-2.backup',
+        error: 'Individual delete failed'
+      }]);
     });
   });
 
   describe('getStorageStats', () => {
-    it('should calculate storage statistics', async () => {
-      const stats = await s3BackupManager.getStorageStats();
+    beforeEach(() => {
+      s3Manager = new S3BackupManager(mockConfig, mockConfigManager);
+    });
 
-      expect(stats).toEqual({
-        totalBackups: 1,
-        totalSize: 1024,
-        oldestBackup: new Date('2023-01-01T00:00:00.000Z'),
-        newestBackup: new Date('2023-01-01T00:00:00.000Z'),
-        storageClassBreakdown: {
-          STANDARD: { count: 1, size: 1024 }
+    it('should calculate storage statistics', async () => {
+      const mockBackups: S3BackupInfo[] = [
+        {
+          key: 'backup-1',
+          size: 1000,
+          lastModified: new Date('2023-01-01'),
+          etag: 'etag1',
+          storageClass: 'STANDARD',
+          metadata: {
+            backupId: 'backup-1',
+            timestamp: new Date('2023-01-01'),
+            type: 'full',
+            size: 1000,
+            checksum: 'checksum1'
+          }
+        },
+        {
+          key: 'backup-2',
+          size: 2000,
+          lastModified: new Date('2023-01-02'),
+          etag: 'etag2',
+          storageClass: 'GLACIER',
+          metadata: {
+            backupId: 'backup-2',
+            timestamp: new Date('2023-01-02'),
+            type: 'incremental',
+            size: 2000,
+            checksum: 'checksum2'
+          }
         }
+      ];
+
+      vi.spyOn(s3Manager, 'listBackups').mockResolvedValue(mockBackups);
+
+      const result = await s3Manager.getStorageStats();
+
+      expect(result).toEqual({
+        totalBackups: 2,
+        totalSize: 3000,
+        oldestBackup: new Date('2023-01-01'),
+        newestBackup: new Date('2023-01-02'),
+        storageClassBreakdown: {
+          STANDARD: { count: 1, size: 1000 },
+          GLACIER: { count: 1, size: 2000 }
+        }
+      });
+    });
+
+    it('should handle empty backup list', async () => {
+      vi.spyOn(s3Manager, 'listBackups').mockResolvedValue([]);
+
+      const result = await s3Manager.getStorageStats();
+
+      expect(result).toEqual({
+        totalBackups: 0,
+        totalSize: 0,
+        oldestBackup: undefined,
+        newestBackup: undefined,
+        storageClassBreakdown: {}
       });
     });
   });
 
   describe('cleanupOldBackups', () => {
-    it('should cleanup old backups based on retention policy', async () => {
-      // Mock old backup
-      const mockS3 = vi.mocked(s3BackupManager as any).s3;
-      mockS3.headObject = vi.fn(() => ({
-        promise: vi.fn().mockResolvedValue({
-          ContentLength: 1024,
-          Metadata: {
-            'backup-id': 'old-backup',
-            'backup-type': 'full',
-            'backup-timestamp': '2022-01-01T00:00:00.000Z', // Old backup
-            'backup-checksum': 'checksum'
+    beforeEach(() => {
+      s3Manager = new S3BackupManager(mockConfig, mockConfigManager);
+    });
+
+    it('should cleanup old backups', async () => {
+      const oldDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000); // 10 days ago
+      const recentDate = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000); // 1 day ago
+
+      const mockBackups: S3BackupInfo[] = [
+        {
+          key: 'old-backup',
+          size: 1000,
+          lastModified: oldDate,
+          etag: 'etag1',
+          storageClass: 'STANDARD',
+          metadata: {
+            backupId: 'old-backup',
+            timestamp: oldDate,
+            type: 'full',
+            size: 1000,
+            checksum: 'checksum1'
           }
-        })
-      }));
-
-      const result = await s3BackupManager.cleanupOldBackups(30); // 30 days retention
-
-      expect(result.deleted).toEqual(['test-key']);
-    });
-
-    it('should not delete recent backups', async () => {
-      // Mock recent backup
-      const mockS3 = vi.mocked(s3BackupManager as any).s3;
-      mockS3.headObject = vi.fn(() => ({
-        promise: vi.fn().mockResolvedValue({
-          ContentLength: 1024,
-          Metadata: {
-            'backup-id': 'recent-backup',
-            'backup-type': 'full',
-            'backup-timestamp': new Date().toISOString(), // Recent backup
-            'backup-checksum': 'checksum'
+        },
+        {
+          key: 'recent-backup',
+          size: 2000,
+          lastModified: recentDate,
+          etag: 'etag2',
+          storageClass: 'STANDARD',
+          metadata: {
+            backupId: 'recent-backup',
+            timestamp: recentDate,
+            type: 'full',
+            size: 2000,
+            checksum: 'checksum2'
           }
-        })
-      }));
+        }
+      ];
 
-      const result = await s3BackupManager.cleanupOldBackups(30);
+      vi.spyOn(s3Manager, 'listBackups').mockResolvedValue(mockBackups);
+      vi.spyOn(s3Manager, 'deleteBackups').mockResolvedValue({
+        deleted: ['old-backup'],
+        errors: []
+      });
 
-      expect(result.deleted).toEqual([]);
-    });
-  });
+      const result = await s3Manager.cleanupOldBackups(7); // 7 days retention
 
-  describe('configuration management', () => {
-    it('should update configuration', () => {
-      const updates = {
-        storageClass: 'GLACIER' as const,
-        maxRetries: 5
-      };
-
-      s3BackupManager.updateConfig(updates);
-      const config = s3BackupManager.getConfig();
-
-      expect(config.storageClass).toBe('GLACIER');
-      expect(config.maxRetries).toBe(5);
+      expect(result.deleted).toEqual(['old-backup']);
+      expect(result.errors).toHaveLength(0);
     });
 
-    it('should return current configuration', () => {
-      const config = s3BackupManager.getConfig();
+    it('should return empty result when no old backups found', async () => {
+      vi.spyOn(s3Manager, 'listBackups').mockResolvedValue([]);
 
-      expect(config).toHaveProperty('bucketName');
-      expect(config).toHaveProperty('region');
-      expect(config).toHaveProperty('backupPrefix');
+      const result = await s3Manager.cleanupOldBackups(7);
+
+      expect(result.deleted).toHaveLength(0);
+      expect(result.errors).toHaveLength(0);
     });
   });
 
   describe('testConnection', () => {
-    it('should return true for successful connection', async () => {
-      const result = await s3BackupManager.testConnection();
-      expect(result).toBe(true);
+    beforeEach(() => {
+      s3Manager = new S3BackupManager(mockConfig, mockConfigManager);
     });
 
-    it('should return false for failed connection', async () => {
-      const mockS3 = vi.mocked(s3BackupManager as any).s3;
-      mockS3.headBucket = vi.fn(() => ({
-        promise: vi.fn().mockRejectedValue(new Error('Connection failed'))
-      }));
+    it('should return true on successful connection test', async () => {
+      mockS3.headBucket.mockResolvedValue({});
 
-      const result = await s3BackupManager.testConnection();
+      const result = await s3Manager.testConnection();
+
+      expect(result).toBe(true);
+      expect(mockS3.headBucket).toHaveBeenCalledWith({ Bucket: 'test-backup-bucket' });
+    });
+
+    it('should return false on connection failure', async () => {
+      mockS3.headBucket.mockRejectedValue(new Error('Connection failed'));
+
+      const result = await s3Manager.testConnection();
+
       expect(result).toBe(false);
+    });
+  });
+
+  describe('updateConfig', () => {
+    beforeEach(() => {
+      s3Manager = new S3BackupManager(mockConfig, mockConfigManager);
+    });
+
+    it('should update configuration', () => {
+      const updates = { bucketName: 'new-bucket', region: 'us-west-2' };
+      
+      s3Manager.updateConfig(updates);
+      const updatedConfig = s3Manager.getConfig();
+
+      expect(updatedConfig.bucketName).toBe('new-bucket');
+      expect(updatedConfig.region).toBe('us-west-2');
+      expect(updatedConfig.backupPrefix).toBe('test-backups'); // Original value preserved
     });
   });
 });
 
-describe('Utility Functions', () => {
+describe('Global S3 Backup Manager', () => {
   beforeEach(() => {
     resetS3BackupManager();
-    vi.clearAllMocks();
   });
 
   afterEach(() => {
@@ -623,39 +818,96 @@ describe('Utility Functions', () => {
   });
 
   describe('createS3BackupManager', () => {
-    it('should create S3 backup manager with custom config', () => {
-      const config = {
-        bucketName: 'custom-bucket',
-        storageClass: 'GLACIER' as const
+    it('should create S3 backup manager with default configuration', () => {
+      const mockConfigManager = {
+        getConfig: vi.fn().mockReturnValue({
+          region: 'us-east-1',
+          s3: {
+            bucketName: 'test-bucket',
+            backupPrefix: 'backups',
+            region: 'us-east-1'
+          }
+        })
       };
+      (AWSConfigManager as any).mockImplementation(() => mockConfigManager);
 
-      const manager = createS3BackupManager(config);
-      const managerConfig = manager.getConfig();
+      const manager = createS3BackupManager();
 
-      expect(managerConfig.bucketName).toBe('custom-bucket');
-      expect(managerConfig.storageClass).toBe('GLACIER');
+      expect(manager).toBeInstanceOf(S3BackupManager);
+      expect(manager.getConfig()).toEqual(expect.objectContaining({
+        bucketName: 'test-bucket',
+        backupPrefix: 'backups'
+      }));
     });
 
-    it('should create S3 backup manager with default config', () => {
-      const manager = createS3BackupManager();
-      expect(manager).toBeInstanceOf(S3BackupManager);
+    it('should create S3 backup manager with custom configuration', () => {
+      const mockConfigManager = {
+        getConfig: vi.fn().mockReturnValue({
+          region: 'us-east-1',
+          s3: { bucketName: 'default-bucket' }
+        })
+      };
+      (AWSConfigManager as any).mockImplementation(() => mockConfigManager);
+
+      const customConfig = { bucketName: 'custom-bucket', maxRetries: 5 };
+      const manager = createS3BackupManager(customConfig);
+
+      expect(manager.getConfig().bucketName).toBe('custom-bucket');
+      expect(manager.getConfig().maxRetries).toBe(5);
     });
   });
 
   describe('getS3BackupManager', () => {
-    it('should return same instance for global manager', () => {
+    it('should return singleton instance', () => {
+      const mockConfigManager = {
+        getConfig: vi.fn().mockReturnValue({
+          region: 'us-east-1',
+          s3: { bucketName: 'test-bucket' }
+        })
+      };
+      (AWSConfigManager as any).mockImplementation(() => mockConfigManager);
+
       const manager1 = getS3BackupManager();
       const manager2 = getS3BackupManager();
 
       expect(manager1).toBe(manager2);
     });
+  });
 
-    it('should create new instance after reset', () => {
+  describe('resetS3BackupManager', () => {
+    it('should reset global instance', () => {
+      const mockConfigManager = {
+        getConfig: vi.fn().mockReturnValue({
+          region: 'us-east-1',
+          s3: { bucketName: 'test-bucket' }
+        })
+      };
+      (AWSConfigManager as any).mockImplementation(() => mockConfigManager);
+
       const manager1 = getS3BackupManager();
       resetS3BackupManager();
       const manager2 = getS3BackupManager();
 
       expect(manager1).not.toBe(manager2);
     });
+  });
+});
+
+describe('S3BackupError', () => {
+  it('should create error with message', () => {
+    const error = new S3BackupError('Test error');
+
+    expect(error.name).toBe('S3BackupError');
+    expect(error.message).toBe('Test error');
+    expect(error.cause).toBeUndefined();
+  });
+
+  it('should create error with cause', () => {
+    const cause = new Error('Original error');
+    const error = new S3BackupError('Test error', cause);
+
+    expect(error.name).toBe('S3BackupError');
+    expect(error.message).toBe('Test error');
+    expect(error.cause).toBe(cause);
   });
 });
