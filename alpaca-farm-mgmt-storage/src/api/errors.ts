@@ -6,92 +6,164 @@
 import { ApiError, ErrorCode, ERROR_CODES } from './types.js';
 
 /**
- * Custom API Error class for structured error handling
+ * Custom API Error class for structured error handling with Lambda support
  */
 export class ApiErrorClass extends Error {
   public readonly code: ErrorCode;
   public readonly statusCode: number;
   public readonly details?: any;
+  public readonly requestId?: string;
+  public readonly timestamp: string;
 
-  constructor(code: ErrorCode, message: string, statusCode: number = 500, details?: any) {
+  constructor(code: ErrorCode, message: string, statusCode: number = 500, details?: any, requestId?: string) {
     super(message);
     this.name = 'ApiError';
     this.code = code;
     this.statusCode = statusCode;
     this.details = details;
+    this.requestId = requestId;
+    this.timestamp = new Date().toISOString();
   }
 
   /**
    * Convert to API error response format
    */
   toApiError(): ApiError {
-    return {
+    const apiError: ApiError = {
       code: this.code,
       message: this.message,
       details: this.details
+    };
+
+    // Add Lambda-specific context in Lambda environment
+    if (process.env.AWS_LAMBDA_FUNCTION_NAME) {
+      Object.assign(apiError, {
+        requestId: this.requestId,
+        timestamp: this.timestamp,
+        functionName: process.env.AWS_LAMBDA_FUNCTION_NAME
+      });
+    }
+
+    return apiError;
+  }
+
+  /**
+   * Convert to CloudWatch-friendly log format
+   */
+  toLogFormat(): any {
+    return {
+      level: 'error',
+      message: this.message,
+      errorCode: this.code,
+      statusCode: this.statusCode,
+      details: this.details,
+      requestId: this.requestId,
+      timestamp: this.timestamp,
+      stack: this.stack,
+      service: 'alpaca-farm-mgmt-api',
+      environment: process.env.NODE_ENV || 'development'
     };
   }
 
   /**
    * Create a validation error
    */
-  static validation(message: string, field?: string, value?: any, constraint?: string): ApiErrorClass {
+  static validation(message: string, field?: string, value?: any, constraint?: string, requestId?: string): ApiErrorClass {
     return new ApiErrorClass(
       ERROR_CODES.VALIDATION_ERROR,
       message,
       422,
-      { field, value, constraint }
+      { field, value, constraint },
+      requestId
     );
   }
 
   /**
    * Create a not found error
    */
-  static notFound(resource: string, id?: string): ApiErrorClass {
+  static notFound(resource: string, id?: string, requestId?: string): ApiErrorClass {
     const message = id ? `${resource} with ID ${id} not found` : `${resource} not found`;
-    return new ApiErrorClass(ERROR_CODES.NOT_FOUND, message, 404);
+    return new ApiErrorClass(ERROR_CODES.NOT_FOUND, message, 404, undefined, requestId);
   }
 
   /**
    * Create a duplicate registration error
    */
-  static duplicateRegistration(registrationNumber: string): ApiErrorClass {
+  static duplicateRegistration(registrationNumber: string, requestId?: string): ApiErrorClass {
     return new ApiErrorClass(
       ERROR_CODES.DUPLICATE_REGISTRATION,
       `Registration number ${registrationNumber} already exists`,
       409,
-      { field: 'registrationNumber', value: registrationNumber }
+      { field: 'registrationNumber', value: registrationNumber },
+      requestId
     );
   }
 
   /**
    * Create an invalid relationship error
    */
-  static invalidRelationship(message: string): ApiErrorClass {
-    return new ApiErrorClass(ERROR_CODES.INVALID_RELATIONSHIP, message, 400);
+  static invalidRelationship(message: string, requestId?: string): ApiErrorClass {
+    return new ApiErrorClass(ERROR_CODES.INVALID_RELATIONSHIP, message, 400, undefined, requestId);
   }
 
   /**
    * Create an inbreeding detected error
    */
-  static inbreedingDetected(sireId: string, damId: string, relationshipDegree: number): ApiErrorClass {
+  static inbreedingDetected(sireId: string, damId: string, relationshipDegree: number, requestId?: string): ApiErrorClass {
     return new ApiErrorClass(
       ERROR_CODES.INBREEDING_DETECTED,
       `Inbreeding detected: sire and dam are related (degree ${relationshipDegree})`,
       400,
-      { sireId, damId, relationshipDegree }
+      { sireId, damId, relationshipDegree },
+      requestId
     );
   }
 
   /**
    * Create a database error
    */
-  static database(message: string, originalError?: Error): ApiErrorClass {
+  static database(message: string, originalError?: Error, requestId?: string): ApiErrorClass {
     return new ApiErrorClass(
       ERROR_CODES.DATABASE_ERROR,
       message,
       500,
-      originalError ? { originalError: originalError.message } : undefined
+      originalError ? { 
+        originalError: originalError.message,
+        errorType: originalError.constructor.name,
+        stack: process.env.NODE_ENV === 'development' ? originalError.stack : undefined
+      } : undefined,
+      requestId
+    );
+  }
+
+  /**
+   * Create a timeout error
+   */
+  static timeout(operation: string, timeoutMs: number, requestId?: string): ApiErrorClass {
+    return new ApiErrorClass(
+      ERROR_CODES.DATABASE_ERROR, // Using DATABASE_ERROR as we don't have a specific timeout code
+      `Operation '${operation}' timed out after ${timeoutMs}ms`,
+      504,
+      { operation, timeoutMs, type: 'timeout' },
+      requestId
+    );
+  }
+
+  /**
+   * Create a Lambda-specific error
+   */
+  static lambda(message: string, errorType: string, requestId?: string): ApiErrorClass {
+    return new ApiErrorClass(
+      ERROR_CODES.DATABASE_ERROR, // Using DATABASE_ERROR as a generic server error
+      message,
+      500,
+      { 
+        type: 'lambda_error',
+        errorType,
+        functionName: process.env.AWS_LAMBDA_FUNCTION_NAME,
+        functionVersion: process.env.AWS_LAMBDA_FUNCTION_VERSION
+      },
+      requestId
     );
   }
 }

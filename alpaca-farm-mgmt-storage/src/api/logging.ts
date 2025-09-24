@@ -27,7 +27,104 @@ export interface Logger {
 }
 
 /**
- * Simple console logger implementation
+ * CloudWatch-optimized structured logger implementation
+ */
+export class CloudWatchLogger implements Logger {
+  private logLevel: LogLevel;
+  private isLambdaEnvironment: boolean;
+
+  constructor(logLevel: LogLevel = LogLevel.INFO) {
+    this.logLevel = logLevel;
+    this.isLambdaEnvironment = !!process.env.AWS_LAMBDA_FUNCTION_NAME;
+  }
+
+  private shouldLog(level: LogLevel): boolean {
+    const levels = [LogLevel.ERROR, LogLevel.WARN, LogLevel.INFO, LogLevel.DEBUG];
+    const currentLevelIndex = levels.indexOf(this.logLevel);
+    const messageLevelIndex = levels.indexOf(level);
+    return messageLevelIndex <= currentLevelIndex;
+  }
+
+  private createLogEntry(level: LogLevel, message: string, meta?: any): any {
+    const baseEntry = {
+      timestamp: new Date().toISOString(),
+      level: level.toUpperCase(),
+      message,
+      service: 'alpaca-farm-mgmt-api',
+      version: process.env.npm_package_version || '1.0.0',
+      environment: process.env.NODE_ENV || 'development'
+    };
+
+    // Add Lambda-specific context if running in Lambda
+    if (this.isLambdaEnvironment) {
+      Object.assign(baseEntry, {
+        functionName: process.env.AWS_LAMBDA_FUNCTION_NAME,
+        functionVersion: process.env.AWS_LAMBDA_FUNCTION_VERSION,
+        requestId: process.env._X_AMZN_TRACE_ID,
+        region: process.env.AWS_REGION,
+        memorySize: process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE,
+        runtime: process.env.AWS_EXECUTION_ENV
+      });
+    }
+
+    // Add metadata if provided
+    if (meta) {
+      Object.assign(baseEntry, { metadata: meta });
+    }
+
+    return baseEntry;
+  }
+
+  private outputLog(level: LogLevel, logEntry: any): void {
+    const jsonString = JSON.stringify(logEntry);
+    
+    switch (level) {
+      case LogLevel.ERROR:
+        console.error(jsonString);
+        break;
+      case LogLevel.WARN:
+        console.warn(jsonString);
+        break;
+      case LogLevel.INFO:
+        console.log(jsonString);
+        break;
+      case LogLevel.DEBUG:
+        console.log(jsonString);
+        break;
+    }
+  }
+
+  error(message: string, meta?: any): void {
+    if (this.shouldLog(LogLevel.ERROR)) {
+      const logEntry = this.createLogEntry(LogLevel.ERROR, message, meta);
+      this.outputLog(LogLevel.ERROR, logEntry);
+    }
+  }
+
+  warn(message: string, meta?: any): void {
+    if (this.shouldLog(LogLevel.WARN)) {
+      const logEntry = this.createLogEntry(LogLevel.WARN, message, meta);
+      this.outputLog(LogLevel.WARN, logEntry);
+    }
+  }
+
+  info(message: string, meta?: any): void {
+    if (this.shouldLog(LogLevel.INFO)) {
+      const logEntry = this.createLogEntry(LogLevel.INFO, message, meta);
+      this.outputLog(LogLevel.INFO, logEntry);
+    }
+  }
+
+  debug(message: string, meta?: any): void {
+    if (this.shouldLog(LogLevel.DEBUG)) {
+      const logEntry = this.createLogEntry(LogLevel.DEBUG, message, meta);
+      this.outputLog(LogLevel.DEBUG, logEntry);
+    }
+  }
+}
+
+/**
+ * Simple console logger implementation (fallback for non-Lambda environments)
  */
 export class ConsoleLogger implements Logger {
   private logLevel: LogLevel;
@@ -75,11 +172,11 @@ export class ConsoleLogger implements Logger {
 }
 
 /**
- * Global logger instance
+ * Global logger instance - uses CloudWatch logger in Lambda environment
  */
-export const logger = new ConsoleLogger(
-  (process.env.LOG_LEVEL as LogLevel) || LogLevel.INFO
-);
+export const logger = process.env.AWS_LAMBDA_FUNCTION_NAME 
+  ? new CloudWatchLogger((process.env.LOG_LEVEL as LogLevel) || LogLevel.INFO)
+  : new ConsoleLogger((process.env.LOG_LEVEL as LogLevel) || LogLevel.INFO);
 
 /**
  * Request logging middleware
@@ -114,8 +211,8 @@ export function requestLoggingMiddleware(
   }
 
   // Override res.end to log response
-  const originalEnd = res.end;
-  res.end = function(chunk?: any, encoding?: any) {
+  const originalEnd = res.end.bind(res);
+  res.end = function(chunk?: any, encoding?: any, cb?: () => void) {
     const duration = Date.now() - startTime;
     
     // Log response
@@ -138,15 +235,15 @@ export function requestLoggingMiddleware(
       });
     }
 
-    // Call original end method
-    originalEnd.call(this, chunk, encoding);
-  };
+    // Call original end method with proper return
+    return originalEnd(chunk, encoding, cb);
+  } as any;
 
   next();
 }
 
 /**
- * Error logging middleware
+ * Error logging middleware with enhanced Lambda context
  * Logs errors with context information
  */
 export function errorLoggingMiddleware(
@@ -156,8 +253,9 @@ export function errorLoggingMiddleware(
   next: NextFunction
 ): void {
   const requestId = req.headers['x-request-id'] as string;
+  const isLambdaEnvironment = !!process.env.AWS_LAMBDA_FUNCTION_NAME;
 
-  logger.error('Request error', {
+  const errorContext = {
     requestId,
     error: error.message,
     stack: error.stack,
@@ -165,8 +263,40 @@ export function errorLoggingMiddleware(
     url: req.url,
     ip: req.ip,
     userAgent: req.get('User-Agent'),
-    body: sanitizeRequestBody(req.body)
-  });
+    body: sanitizeRequestBody(req.body),
+    errorType: error.constructor.name
+  };
+
+  // Add Lambda-specific context if running in Lambda
+  if (isLambdaEnvironment) {
+    Object.assign(errorContext, {
+      functionName: process.env.AWS_LAMBDA_FUNCTION_NAME,
+      functionVersion: process.env.AWS_LAMBDA_FUNCTION_VERSION,
+      memorySize: process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE,
+      remainingTime: req.headers['x-lambda-remaining-time'] as string,
+      coldStart: req.headers['x-lambda-cold-start'] === 'true'
+    });
+  }
+
+  logger.error('Request processing error', errorContext);
+
+  // Log additional context for specific error types
+  if (error.message.includes('timeout')) {
+    logger.warn('Request timeout detected', {
+      requestId,
+      url: req.url,
+      method: req.method,
+      recommendation: 'Consider optimizing request processing or increasing timeout'
+    });
+  } else if (error.message.includes('database') || error.message.includes('connection')) {
+    logger.error('Database-related error in request processing', {
+      requestId,
+      url: req.url,
+      method: req.method,
+      error: error.message,
+      recommendation: 'Check database connectivity and query performance'
+    });
+  }
 
   next(error);
 }
@@ -389,6 +519,195 @@ export function createRequestContext(req: Request): any {
     ip: req.ip,
     userAgent: req.get('User-Agent')
   };
+}
+
+/**
+ * Lambda-specific error logging
+ */
+export function logLambdaColdStart(
+  requestId: string,
+  initializationTime: number,
+  memoryUsed?: number
+): void {
+  logger.info('Lambda cold start detected', {
+    requestId,
+    initializationTime: `${initializationTime}ms`,
+    memoryUsed: memoryUsed ? `${memoryUsed}MB` : undefined,
+    functionName: process.env.AWS_LAMBDA_FUNCTION_NAME,
+    functionVersion: process.env.AWS_LAMBDA_FUNCTION_VERSION,
+    coldStartOptimization: {
+      connectionPoolReuse: true,
+      expressAppReuse: true
+    }
+  });
+}
+
+/**
+ * Lambda timeout warning logging
+ */
+export function logLambdaTimeoutWarning(
+  requestId: string,
+  remainingTime: number,
+  operation: string
+): void {
+  logger.warn('Lambda timeout warning', {
+    requestId,
+    remainingTime: `${remainingTime}ms`,
+    operation,
+    functionName: process.env.AWS_LAMBDA_FUNCTION_NAME,
+    recommendation: remainingTime < 5000 ? 'Consider increasing timeout or optimizing operation' : 'Monitor for potential timeout'
+  });
+}
+
+/**
+ * Database connection error logging with retry context
+ */
+export function logDatabaseConnectionError(
+  error: Error,
+  attempt: number,
+  maxAttempts: number,
+  operation: string,
+  requestId?: string
+): void {
+  const isRetryable = attempt < maxAttempts;
+  const logLevel = isRetryable ? LogLevel.WARN : LogLevel.ERROR;
+  
+  const logMessage = isRetryable 
+    ? `Database connection failed, retrying (${attempt}/${maxAttempts})`
+    : `Database connection failed after all retry attempts (${attempt}/${maxAttempts})`;
+
+  const logEntry = {
+    requestId,
+    operation,
+    error: error.message,
+    stack: error.stack,
+    attempt,
+    maxAttempts,
+    isRetryable,
+    errorType: classifyDatabaseError(error),
+    connectionPool: {
+      host: process.env.RDS_HOST,
+      database: process.env.RDS_DATABASE,
+      ssl: process.env.RDS_SSL !== 'false'
+    }
+  };
+
+  if (logLevel === LogLevel.ERROR) {
+    logger.error(logMessage, logEntry);
+  } else {
+    logger.warn(logMessage, logEntry);
+  }
+}
+
+/**
+ * API Gateway integration error logging
+ */
+export function logApiGatewayError(
+  error: Error,
+  event: any,
+  requestId: string,
+  statusCode: number
+): void {
+  logger.error('API Gateway integration error', {
+    requestId,
+    error: error.message,
+    stack: error.stack,
+    statusCode,
+    httpMethod: event.httpMethod,
+    path: event.path,
+    stage: event.requestContext?.stage,
+    sourceIp: event.requestContext?.identity?.sourceIp,
+    userAgent: event.headers?.['User-Agent'] || event.headers?.['user-agent'],
+    apiGatewayRequestId: event.requestContext?.requestId,
+    integration: {
+      type: 'lambda-proxy',
+      timeout: process.env.AWS_LAMBDA_FUNCTION_TIMEOUT || '30s'
+    }
+  });
+}
+
+/**
+ * Lambda memory and performance monitoring
+ */
+export function logLambdaPerformanceMetrics(
+  requestId: string,
+  executionTime: number,
+  memoryUsed?: number,
+  coldStart: boolean = false
+): void {
+  const memoryLimit = process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE;
+  const memoryUtilization = memoryUsed && memoryLimit 
+    ? Math.round((memoryUsed / parseInt(memoryLimit)) * 100)
+    : undefined;
+
+  logger.info('Lambda performance metrics', {
+    requestId,
+    executionTime: `${executionTime}ms`,
+    memoryUsed: memoryUsed ? `${memoryUsed}MB` : undefined,
+    memoryLimit: memoryLimit ? `${memoryLimit}MB` : undefined,
+    memoryUtilization: memoryUtilization ? `${memoryUtilization}%` : undefined,
+    coldStart,
+    performance: {
+      isSlowRequest: executionTime > 5000,
+      isHighMemoryUsage: memoryUtilization && memoryUtilization > 80,
+      recommendations: getPerformanceRecommendations(executionTime, memoryUtilization)
+    }
+  });
+}
+
+/**
+ * Classify database errors for better error handling
+ */
+function classifyDatabaseError(error: Error): string {
+  const message = error.message.toLowerCase();
+  
+  if (message.includes('timeout') || message.includes('timed out')) {
+    return 'TIMEOUT';
+  } else if (message.includes('connection') && (message.includes('refused') || message.includes('failed'))) {
+    return 'CONNECTION_REFUSED';
+  } else if (message.includes('authentication') || message.includes('password')) {
+    return 'AUTHENTICATION_FAILED';
+  } else if (message.includes('database') && message.includes('does not exist')) {
+    return 'DATABASE_NOT_FOUND';
+  } else if (message.includes('ssl') || message.includes('certificate')) {
+    return 'SSL_ERROR';
+  } else if (message.includes('pool') || message.includes('connection limit')) {
+    return 'POOL_EXHAUSTED';
+  } else if (message.includes('syntax error') || message.includes('column does not exist')) {
+    return 'SQL_ERROR';
+  } else if (message.includes('constraint') || message.includes('duplicate key')) {
+    return 'CONSTRAINT_VIOLATION';
+  }
+  
+  return 'UNKNOWN';
+}
+
+/**
+ * Get performance recommendations based on metrics
+ */
+function getPerformanceRecommendations(
+  executionTime: number, 
+  memoryUtilization?: number
+): string[] {
+  const recommendations: string[] = [];
+  
+  if (executionTime > 10000) {
+    recommendations.push('Consider optimizing database queries or increasing Lambda memory');
+  } else if (executionTime > 5000) {
+    recommendations.push('Monitor for potential performance bottlenecks');
+  }
+  
+  if (memoryUtilization && memoryUtilization > 90) {
+    recommendations.push('Consider increasing Lambda memory allocation');
+  } else if (memoryUtilization && memoryUtilization > 80) {
+    recommendations.push('Monitor memory usage for potential optimization');
+  }
+  
+  if (memoryUtilization && memoryUtilization < 30) {
+    recommendations.push('Consider reducing Lambda memory allocation for cost optimization');
+  }
+  
+  return recommendations;
 }
 
 /**

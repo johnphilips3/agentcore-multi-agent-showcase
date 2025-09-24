@@ -8,6 +8,9 @@ import helmet from 'helmet';
 import compression from 'compression';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
+import swaggerUi from 'swagger-ui-express';
+import YAML from 'yamljs';
+import path from 'path';
 import { createApiRoutes } from './routes/index.js';
 
 /**
@@ -118,6 +121,47 @@ export function createFullApp(config: Partial<ServerConfig> = {}): Application {
       }
     });
   });
+
+  // API documentation with Swagger UI (can be disabled via environment variable)
+  if (process.env.ENABLE_SWAGGER_UI !== 'false') {
+    try {
+    // Try multiple paths to find the OpenAPI file (works in both local and Lambda environments)
+    let swaggerDocument;
+    const possiblePaths = [
+      path.join(__dirname, 'openapi.yaml'),
+      path.join(process.cwd(), 'dist/api/openapi.yaml'),
+      path.join(process.cwd(), 'openapi.yaml'),
+      './openapi.yaml'
+    ];
+    
+    for (const yamlPath of possiblePaths) {
+      try {
+        swaggerDocument = YAML.load(yamlPath);
+        console.log(`Successfully loaded OpenAPI spec from: ${yamlPath}`);
+        break;
+      } catch (pathError) {
+        console.log(`Failed to load OpenAPI spec from: ${yamlPath}`);
+        continue;
+      }
+    }
+    
+    if (swaggerDocument) {
+      app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
+        explorer: true,
+        customCss: '.swagger-ui .topbar { display: none }',
+        customSiteTitle: 'Alpaca Herd Management API Documentation'
+      }));
+      console.log('Swagger UI configured successfully at /api-docs');
+    } else {
+      throw new Error('Could not find OpenAPI specification file in any expected location');
+    }
+    } catch (error) {
+      console.warn('Failed to load OpenAPI specification for Swagger UI:', error);
+      console.warn('Swagger UI will not be available');
+    }
+  } else {
+    console.log('Swagger UI disabled via ENABLE_SWAGGER_UI environment variable');
+  }
 
   // Mount API routes
   app.use('/api/v1', createApiRoutes());

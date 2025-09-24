@@ -1,4 +1,3 @@
-import sqlite3 from 'sqlite3';
 import { Pool, Client, PoolConfig } from 'pg';
 import { RDS } from 'aws-sdk';
 
@@ -22,10 +21,12 @@ export interface DatabaseConfig {
 }
 
 export interface DatabaseConnection {
+  connect(): Promise<void>;
   query<T = any>(sql: string, params?: any[]): Promise<T[]>;
   execute(sql: string, params?: any[]): Promise<{ changes: number; lastInsertRowid?: number }>;
   close(): Promise<void>;
   isConnected(): boolean;
+  testConnection(): Promise<void>;
 }
 
 export class ConnectionError extends Error {
@@ -36,16 +37,26 @@ export class ConnectionError extends Error {
 }
 
 export class SQLiteConnection implements DatabaseConnection {
-  private db: sqlite3.Database | null = null;
+  private db: any | null = null;
   private connected = false;
+  private sqlite3: any = null;
 
   constructor(private config: DatabaseConfig) {}
 
   async connect(): Promise<void> {
+    // Dynamically load sqlite3 only when needed
+    if (!this.sqlite3) {
+      try {
+        this.sqlite3 = require('sqlite3');
+      } catch (error) {
+        throw new ConnectionError('SQLite3 is not available in this environment. Use PostgreSQL or AWS RDS instead.');
+      }
+    }
+    
     return new Promise((resolve, reject) => {
       const dbPath = this.config.connectionString || this.config.database || ':memory:';
       
-      this.db = new sqlite3.Database(dbPath, (err) => {
+      this.db = new this.sqlite3.Database(dbPath, (err: any) => {
         if (err) {
           reject(new ConnectionError(`Failed to connect to SQLite database: ${err.message}`, err));
           return;
@@ -65,7 +76,7 @@ export class SQLiteConnection implements DatabaseConnection {
     }
 
     return new Promise((resolve, reject) => {
-      this.db!.all(sql, params, (err, rows) => {
+      this.db!.all(sql, params, (err: any, rows: any) => {
         if (err) {
           reject(new ConnectionError(`Query failed: ${err.message}`, err));
           return;
@@ -81,11 +92,12 @@ export class SQLiteConnection implements DatabaseConnection {
     }
 
     return new Promise((resolve, reject) => {
-      this.db!.run(sql, params, function(err) {
+      this.db!.run(sql, params, function(err: any) {
         if (err) {
           reject(new ConnectionError(`Execute failed: ${err.message}`, err));
           return;
         }
+        // @ts-ignore - 'this' in sqlite3 callback refers to the statement context
         resolve({ changes: this.changes, lastInsertRowid: this.lastID });
       });
     });
@@ -95,7 +107,7 @@ export class SQLiteConnection implements DatabaseConnection {
     if (!this.db) return;
 
     return new Promise((resolve, reject) => {
-      this.db!.close((err) => {
+      this.db!.close((err: any) => {
         if (err) {
           reject(new ConnectionError(`Failed to close database: ${err.message}`, err));
           return;
@@ -109,6 +121,15 @@ export class SQLiteConnection implements DatabaseConnection {
 
   isConnected(): boolean {
     return this.connected && this.db !== null;
+  }
+
+  async testConnection(): Promise<void> {
+    if (!this.isConnected()) {
+      throw new ConnectionError('Database not connected');
+    }
+    
+    // Test with a simple query
+    await this.query('SELECT 1');
   }
 }export
  class PostgreSQLConnection implements DatabaseConnection {
@@ -190,6 +211,15 @@ export class SQLiteConnection implements DatabaseConnection {
   isConnected(): boolean {
     return this.connected && this.pool !== null;
   }
+
+  async testConnection(): Promise<void> {
+    if (!this.isConnected()) {
+      throw new ConnectionError('Database not connected');
+    }
+    
+    // Test with a simple query
+    await this.query('SELECT 1');
+  }
 }
 
 export class AWSRDSConnection implements DatabaseConnection {
@@ -242,7 +272,8 @@ export class AWSRDSConnection implements DatabaseConnection {
     };
 
     return new Promise((resolve, reject) => {
-      this.rds.getAuthToken(params, (err, token) => {
+      const signer = new RDS.Signer();
+      signer.getAuthToken(params, (err: any, token: any) => {
         if (err) {
           reject(new ConnectionError(`Failed to generate IAM token: ${err.message}`, err));
           return;
@@ -295,6 +326,15 @@ export class AWSRDSConnection implements DatabaseConnection {
 
   isConnected(): boolean {
     return this.connected && this.pool !== null;
+  }
+
+  async testConnection(): Promise<void> {
+    if (!this.isConnected()) {
+      throw new ConnectionError('Database not connected');
+    }
+    
+    // Test with a simple query
+    await this.query('SELECT 1');
   }
 }export
  class ConnectionManager {

@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { createAndStartServer } = require('./dist/api/server.js');
+const { createAndStartFullServer } = require('./dist/api/full-server.js');
 
 async function main() {
   try {
@@ -7,7 +7,7 @@ async function main() {
     console.log('Database:', process.env.RDS_HOST);
     console.log('Region:', process.env.AWS_REGION);
     
-    await createAndStartServer();
+    await createAndStartFullServer();
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);

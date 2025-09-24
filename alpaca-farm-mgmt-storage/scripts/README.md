@@ -1,10 +1,377 @@
-# Database Scripts
+# Scripts Directory
 
-This directory contains scripts for managing the Alpaca Herd Storage database.
+This directory contains scripts for managing the Alpaca Herd Storage database and AWS SAM deployment.
 
 ## Scripts
 
-### `init-database.sh`
+**Platform Compatibility**: All scripts are optimized for macOS (darwin) and use BSD-compatible date commands.
+
+### AWS SAM Deployment Scripts
+
+#### `test-env.sh`
+Tests and validates environment variable configuration before deployment.
+
+**Features:**
+- Checks all required RDS environment variables
+- Validates AWS CLI configuration and credentials
+- Provides clear feedback on missing variables
+- Shows example setup commands
+- Helps troubleshoot deployment issues
+
+**Usage:**
+```bash
+# Test environment setup
+./scripts/test-env.sh
+```
+
+#### `deploy.sh`
+Deploys the application to AWS using SAM (Serverless Application Model).
+
+**Features:**
+- Validates AWS credentials and configuration
+- Builds TypeScript code and packages Lambda function
+- Deploys CloudFormation stack with API Gateway and Lambda
+- Outputs API Gateway endpoint URL
+- Comprehensive error handling and rollback support
+- Environment-specific cost optimization parameters
+- Enhanced environment variable validation
+
+**Usage:**
+```bash
+# Test environment first
+./scripts/test-env.sh
+
+# Deploy with default configuration
+./scripts/deploy.sh
+
+# Deploy to specific environment
+./scripts/deploy.sh --stage prod
+
+# Deploy to different region
+./scripts/deploy.sh --region us-west-2
+
+# Deploy without confirmation prompts
+./scripts/deploy.sh --force
+
+# Show help
+./scripts/deploy.sh --help
+```
+
+#### `destroy.sh`
+Removes all AWS resources created by the SAM deployment.
+
+**Features:**
+- Removes CloudFormation stack and all associated resources
+- Confirmation prompts for safety
+- Cleanup validation to ensure complete resource removal
+- Handles stack dependencies and cleanup order
+
+**Usage:**
+```bash
+# Destroy default stack
+./scripts/destroy.sh
+
+# Destroy specific environment
+./scripts/destroy.sh staging
+
+# Force destroy without confirmation
+./scripts/destroy.sh --force
+```
+
+#### `status.sh`
+Shows deployment status and stack information.
+
+**Features:**
+- Displays CloudFormation stack status and resources
+- Shows API Gateway endpoint URL
+- Lists recent CloudWatch logs (last 10 minutes)
+- Performs basic API health check
+- Provides quick access to other management commands
+
+**Usage:**
+```bash
+# Show status for default stack
+./scripts/status.sh
+
+# Show status for specific stack and region
+./scripts/status.sh my-stack us-west-2
+
+# Show help
+./scripts/status.sh --help
+```
+
+#### `logs.sh`
+Views CloudWatch logs with filtering and search capabilities.
+
+**Features:**
+- Real-time log streaming with `--follow` option
+- Filter by log level (info, warn, error, debug)
+- Search logs with pattern matching
+- Time-based filtering (last N minutes, specific date ranges)
+- Colored output for better readability
+- Log statistics and event counts
+
+**Usage:**
+```bash
+# Show recent logs (last hour)
+./scripts/logs.sh
+
+# Follow logs in real-time
+./scripts/logs.sh --follow
+
+# Show only error logs
+./scripts/logs.sh --level error
+
+# Search for specific pattern
+./scripts/logs.sh --grep "database"
+
+# Show logs from last 30 minutes
+./scripts/logs.sh --tail 30
+
+# Show logs since specific time
+./scripts/logs.sh --since "2024-01-01 10:00:00"
+
+# Follow error logs only
+./scripts/logs.sh --follow --level error
+
+# Show help
+./scripts/logs.sh --help
+```
+
+#### `debug.sh`
+Advanced debugging and monitoring tool with multiple modes.
+
+**Features:**
+- Interactive debugging menu with multiple options
+- Real-time log streaming with enhanced formatting
+- Error-only monitoring mode
+- Performance metrics and Lambda configuration display
+- Continuous health monitoring with success rate tracking
+- API endpoint testing with response times
+- Log search and analysis tools
+
+**Modes:**
+- `interactive` - Interactive menu (default)
+- `stream` - Stream all logs in real-time
+- `errors` - Monitor errors only
+- `performance` - Show performance metrics and monitoring
+- `health` - Continuous API health monitoring
+
+**Usage:**
+```bash
+# Interactive debugging menu
+./scripts/debug.sh
+
+# Stream all logs with enhanced formatting
+./scripts/debug.sh stream
+
+# Monitor errors only
+./scripts/debug.sh errors
+
+# Performance monitoring
+./scripts/debug.sh performance
+
+# Health monitoring
+./scripts/debug.sh health
+
+# Custom stack and region
+./scripts/debug.sh --stack my-stack --region us-west-2 stream
+
+# Show help
+./scripts/debug.sh --help
+```
+
+#### `test-local.sh`
+Comprehensive testing script for SAM local development environment.
+
+**Features:**
+- Automated SAM local startup and management
+- Health check validation and database connectivity tests
+- Complete API endpoint testing with CRUD operations
+- Performance testing and response time validation
+- Error handling verification (404, 400 responses)
+- Automatic test data cleanup
+- Detailed test reporting with pass/fail counts
+
+**Usage:**
+```bash
+# Run all tests (starts SAM local automatically)
+./scripts/test-local.sh
+
+# Run tests on custom port
+./scripts/test-local.sh --port 8080
+
+# Run only health checks
+./scripts/test-local.sh --health-only
+
+# Run only API endpoint tests
+./scripts/test-local.sh --api-only
+
+# Run tests assuming SAM local is already running
+./scripts/test-local.sh --no-start
+
+# Verbose output with request/response details
+./scripts/test-local.sh --verbose
+
+# Custom timeout for requests
+./scripts/test-local.sh --timeout 60
+
+# Show help
+./scripts/test-local.sh --help
+```
+
+#### `test-deployed.sh`
+Comprehensive testing script for deployed AWS API Gateway endpoints.
+
+**Features:**
+- Automatic API Gateway URL discovery from CloudFormation stack
+- CloudFormation stack status verification
+- Health check validation and Lambda performance testing
+- Complete API endpoint testing with CRUD operations
+- Load testing with concurrent requests
+- Cold start and warm Lambda performance measurement
+- Error handling verification and response validation
+- Automatic test data cleanup
+
+**Usage:**
+```bash
+# Test deployed API (auto-discover endpoint)
+./scripts/test-deployed.sh
+
+# Test specific stack and region
+./scripts/test-deployed.sh --stack my-stack --region us-west-2
+
+# Test with specific API URL
+./scripts/test-deployed.sh --url https://abc123.execute-api.us-east-1.amazonaws.com/Prod/api/v1
+
+# Run only health checks
+./scripts/test-deployed.sh --health-only
+
+# Run only API endpoint tests
+./scripts/test-deployed.sh --api-only
+
+# Run load testing with concurrent requests
+./scripts/test-deployed.sh --load-test
+
+# Verbose output with request/response details
+./scripts/test-deployed.sh --verbose
+
+# Don't clean up test data after running
+./scripts/test-deployed.sh --no-cleanup
+
+# Custom timeout for requests
+./scripts/test-deployed.sh --timeout 60
+
+# Show help
+./scripts/test-deployed.sh --help
+```
+
+#### `api-examples.sh`
+Manual API testing examples with curl commands for all endpoints.
+
+**Features:**
+- Complete curl command examples for all API endpoints
+- Support for both local and deployed API testing
+- Organized by endpoint categories (alpacas, health, breeding, activities)
+- Interactive mode to execute commands and see responses
+- Template commands with placeholder replacement guidance
+
+**Usage:**
+```bash
+# Show all API examples
+./scripts/api-examples.sh
+
+# Show examples for deployed API
+./scripts/api-examples.sh --url https://abc123.execute-api.us-east-1.amazonaws.com/Prod/api/v1
+
+# Show only alpaca endpoint examples
+./scripts/api-examples.sh alpacas
+
+# Show only health records examples
+./scripts/api-examples.sh health
+
+# Execute commands and see responses (interactive mode)
+./scripts/api-examples.sh --verbose
+
+# Execute specific category with responses
+./scripts/api-examples.sh --verbose alpacas
+
+# Show available categories
+./scripts/api-examples.sh list
+
+# Show help
+./scripts/api-examples.sh --help
+```
+
+#### `security-audit.sh`
+Comprehensive security audit and validation tool for deployed AWS resources.
+
+**Features:**
+- IAM role permissions audit with least-privilege validation
+- Lambda function security configuration analysis
+- API Gateway security settings review
+- CloudWatch logs configuration audit
+- Security recommendations and best practices
+- Automated security report generation
+- Compliance checking for cost optimization settings
+
+**Usage:**
+```bash
+# Run interactive security audit
+./scripts/security-audit.sh
+
+# Generate security report only
+./scripts/security-audit.sh --report
+
+# Show help
+./scripts/security-audit.sh --help
+```
+
+**Security Checks:**
+- Validates least-privilege IAM policies
+- Checks for wildcard permissions (security risk)
+- Audits Lambda environment variables (redacts sensitive data)
+- Reviews API Gateway throttling and CORS configuration
+- Analyzes CloudWatch log retention policies
+- Provides production security recommendations
+
+#### `cost-monitor.sh`
+AWS cost monitoring and optimization analysis tool.
+
+**Features:**
+- Lambda function cost analysis with usage metrics
+- API Gateway cost tracking and projections
+- CloudWatch logs cost estimation
+- Monthly cost projections based on current usage
+- Cost optimization recommendations
+- Automated cost alert setup with SNS notifications
+- Performance metrics correlation with costs
+
+**Usage:**
+```bash
+# Run interactive cost monitoring
+./scripts/cost-monitor.sh
+
+# Generate cost report only
+./scripts/cost-monitor.sh --report
+
+# Set up cost alerts only
+./scripts/cost-monitor.sh --alerts
+
+# Show help
+./scripts/cost-monitor.sh --help
+```
+
+**Cost Analysis:**
+- Calculates Lambda costs based on invocations, memory, and duration
+- Estimates API Gateway costs from request volumes
+- Projects monthly costs from weekly usage patterns
+- Identifies cost optimization opportunities
+- Provides environment-specific cost breakdowns
+
+### Database Management Scripts
+
+#### `init-database.sh`
 Initializes the database schema and optionally seeds test data.
 
 **Features:**
@@ -244,9 +611,260 @@ Both scripts include comprehensive error handling:
 - Backup file validation
 - User confirmation for destructive operations
 
+## AWS SAM Deployment Workflow
+
+### Typical Deployment Process
+
+1. **Deploy the application:**
+   ```bash
+   ./scripts/deploy.sh
+   ```
+
+2. **Check deployment status:**
+   ```bash
+   ./scripts/status.sh
+   ```
+
+3. **Test the deployed API:**
+   ```bash
+   ./scripts/test-deployed.sh
+   ```
+
+4. **Run security audit:**
+   ```bash
+   ./scripts/security-audit.sh
+   ```
+
+5. **Monitor costs and performance:**
+   ```bash
+   ./scripts/cost-monitor.sh
+   ```
+
+6. **Monitor logs during testing:**
+   ```bash
+   ./scripts/logs.sh --follow
+   ```
+
+7. **Debug issues if they arise:**
+   ```bash
+   ./scripts/debug.sh
+   ```
+
+8. **Clean up when done:**
+   ```bash
+   ./scripts/destroy.sh
+   ```
+
+### Security and Cost Optimization Workflow
+
+1. **Post-deployment security validation:**
+   ```bash
+   # Run comprehensive security audit
+   ./scripts/security-audit.sh
+   
+   # Generate security report for compliance
+   ./scripts/security-audit.sh --report
+   ```
+
+2. **Cost monitoring setup:**
+   ```bash
+   # Analyze current costs and usage
+   ./scripts/cost-monitor.sh
+   
+   # Set up automated cost alerts
+   ./scripts/cost-monitor.sh --alerts
+   
+   # Subscribe to cost notifications
+   aws sns subscribe \
+     --topic-arn arn:aws:sns:us-east-1:ACCOUNT:alpaca-farm-cost-alerts \
+     --protocol email \
+     --notification-endpoint your-email@example.com
+   ```
+
+3. **Regular monitoring (weekly/monthly):**
+   ```bash
+   # Weekly cost review
+   ./scripts/cost-monitor.sh --report
+   
+   # Monthly security audit
+   ./scripts/security-audit.sh --report
+   ```
+
+### Local Development and Testing Workflow
+
+1. **Test locally before deployment:**
+   ```bash
+   ./scripts/test-local.sh
+   ```
+
+2. **Deploy to AWS:**
+   ```bash
+   ./scripts/deploy.sh
+   ```
+
+3. **Test deployed version:**
+   ```bash
+   ./scripts/test-deployed.sh
+   ```
+
+4. **Compare local vs deployed performance:**
+   ```bash
+   # Local testing
+   ./scripts/test-local.sh --verbose
+
+   # Deployed testing
+   ./scripts/test-deployed.sh --verbose
+   ```
+
+### Monitoring and Debugging Examples
+
+#### Real-time Error Monitoring
+```bash
+# Monitor errors in real-time
+./scripts/debug.sh errors
+
+# Or use logs.sh for error filtering
+./scripts/logs.sh --follow --level error
+```
+
+#### Performance Analysis
+```bash
+# Check Lambda performance metrics
+./scripts/debug.sh performance
+
+# Search for performance-related logs
+./scripts/logs.sh --grep "duration\|memory\|timeout"
+```
+
+#### Health Monitoring
+```bash
+# Continuous health checks with success rate tracking
+./scripts/debug.sh health
+
+# Quick health check
+./scripts/status.sh
+```
+
+#### Log Analysis
+```bash
+# Search for database-related issues
+./scripts/logs.sh --grep "database\|connection\|sql"
+
+# Show logs from when an issue started
+./scripts/logs.sh --since "2024-01-01 14:30:00"
+
+# Get last 100 log entries
+./scripts/logs.sh --lines 100
+```
+
+### Testing Examples
+
+#### Local Development Testing
+```bash
+# Quick health check during development
+./scripts/test-local.sh --health-only
+
+# Full API testing with verbose output
+./scripts/test-local.sh --verbose
+
+# Test on custom port (if SAM local is running elsewhere)
+./scripts/test-local.sh --port 8080 --no-start
+
+# Performance testing only
+./scripts/test-local.sh --api-only
+```
+
+#### Deployed API Testing
+```bash
+# Quick deployment verification
+./scripts/test-deployed.sh --health-only
+
+# Full API testing
+./scripts/test-deployed.sh
+
+# Load testing for performance validation
+./scripts/test-deployed.sh --load-test
+
+# Test specific environment
+./scripts/test-deployed.sh --stack alpaca-herd-staging --region us-west-2
+
+# Test with manual URL (bypass auto-discovery)
+./scripts/test-deployed.sh --url https://myapi.execute-api.us-east-1.amazonaws.com/Prod/api/v1
+```
+
+#### Continuous Integration Examples
+```bash
+# CI pipeline testing
+./scripts/test-local.sh --health-only --timeout 30
+if [ $? -eq 0 ]; then
+    ./scripts/deploy.sh
+    ./scripts/test-deployed.sh --health-only
+fi
+
+# Load testing for production readiness
+./scripts/test-deployed.sh --load-test --no-cleanup
+```
+
+#### Debugging Workflow
+```bash
+# Test locally first
+./scripts/test-local.sh --verbose
+
+# Deploy and test
+./scripts/deploy.sh
+./scripts/test-deployed.sh --verbose
+
+# If issues found, debug
+./scripts/debug.sh errors
+./scripts/logs.sh --level error --tail 60
+```
+
+#### Manual API Testing
+```bash
+# Get curl examples for all endpoints
+./scripts/api-examples.sh
+
+# Test specific endpoint category
+./scripts/api-examples.sh alpacas --verbose
+
+# Test with deployed API
+./scripts/api-examples.sh --url https://myapi.execute-api.us-east-1.amazonaws.com/Prod/api/v1
+
+# Interactive testing with responses
+./scripts/api-examples.sh --verbose health
+```
+
+### AWS Configuration
+
+The AWS SAM scripts require:
+
+- AWS CLI configured with appropriate credentials
+- SAM CLI installed
+- Proper IAM permissions for CloudFormation, Lambda, API Gateway, and CloudWatch
+
+**Required AWS Permissions:**
+- `cloudformation:*` - For stack management
+- `lambda:*` - For Lambda function management
+- `apigateway:*` - For API Gateway management
+- `logs:*` - For CloudWatch logs access
+- `iam:CreateRole`, `iam:AttachRolePolicy` - For Lambda execution role
+
+**Environment Variables:**
+```bash
+export AWS_REGION=us-east-1
+export AWS_PROFILE=my-profile  # Optional: use specific AWS profile
+```
+
 ## Security Notes
 
+### Database Scripts
 - PostgreSQL passwords can be provided via environment variables to avoid command-line exposure
 - Scripts validate input parameters to prevent SQL injection
 - Backup files are created with appropriate permissions
 - Database connections use standard security practices
+
+### AWS SAM Scripts
+- AWS credentials should be configured securely using AWS CLI or IAM roles
+- CloudWatch logs may contain sensitive information - ensure proper log retention policies
+- API Gateway endpoints are public by default - implement authentication as needed
+- Lambda functions have IAM roles with minimal required permissions

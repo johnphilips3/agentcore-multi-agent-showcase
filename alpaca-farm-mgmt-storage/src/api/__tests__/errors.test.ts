@@ -119,7 +119,9 @@ describe('Error Handling', () => {
         expect(error.message).toBe('Database operation failed');
         expect(error.statusCode).toBe(500);
         expect(error.details).toEqual({
-          originalError: 'Connection failed'
+          originalError: 'Connection failed',
+          errorType: 'Error',
+          stack: undefined
         });
       });
 

@@ -1,0 +1,415 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  alpaca-farm-mgmt-storage
+  
+  SAM Template for Alpaca Farm Management Storage API
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    Runtime: nodejs20.x
+    Environment:
+      Variables:
+        NODE_ENV: production
+        LOG_LEVEL: info
+    # Cost optimization: Enable X-Ray tracing only for debugging
+    Tracing: PassThrough
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    Description: Deployment stage (dev, staging, prod)
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+  
+  RDSHost:
+    Type: String
+    Description: RDS PostgreSQL endpoint
+    Default: ""
+  
+  RDSPort:
+    Type: String
+    Default: "5432"
+    Description: RDS PostgreSQL port
+  
+  RDSDatabase:
+    Type: String
+    Default: "alpaca_herd"
+    Description: RDS database name
+  
+  RDSUsername:
+    Type: String
+    Description: RDS username
+    Default: ""
+  
+  RDSPassword:
+    Type: String
+    Description: RDS password
+    NoEcho: true
+    Default: ""
+  
+  # Cost optimization parameters
+  LambdaMemorySize:
+    Type: Number
+    Default: 512
+    MinValue: 128
+    MaxValue: 3008
+    Description: Lambda function memory size (MB) - optimize for cost vs performance
+  
+  LambdaTimeout:
+    Type: Number
+    Default: 30
+    MinValue: 3
+    MaxValue: 900
+    Description: Lambda function timeout (seconds)
+  
+  ReservedConcurrency:
+    Type: Number
+    Default: 5
+    MinValue: 0
+    MaxValue: 100
+    Description: Reserved concurrency limit for cost control
+  
+  LogRetentionDays:
+    Type: Number
+    Default: 7
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+    Description: CloudWatch log retention period (days) for cost optimization
+  
+  # VPC Configuration Parameters
+  VpcId:
+    Type: String
+    Description: VPC ID where Lambda should be deployed (optional - leave empty for no VPC)
+    Default: ""
+  
+  SubnetIds:
+    Type: CommaDelimitedList
+    Description: Comma-delimited list of subnet IDs for Lambda (required if VpcId is provided)
+    Default: ""
+  
+  SecurityGroupIds:
+    Type: CommaDelimitedList
+    Description: Comma-delimited list of security group IDs for Lambda (optional - will create default if not provided)
+    Default: ""
+
+Conditions:
+  IsProd: !Equals [!Ref Stage, "prod"]
+  HasVpcConfig: !Not [!Equals [!Ref VpcId, ""]]
+  HasSecurityGroups: !Not [!Equals [!Join ["", !Ref SecurityGroupIds], ""]]
+  CreateSecurityGroup: !And [!Condition HasVpcConfig, !Not [!Condition HasSecurityGroups]]
+
+Resources:
+  # Security Group for Lambda function (created only if VPC is specified but no security groups provided)
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: CreateSecurityGroup
+    Properties:
+      GroupName: !Sub "${AWS::StackName}-lambda-sg"
+      GroupDescription: Security group for Alpaca Farm Management Lambda function
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        # Allow HTTPS outbound for AWS API calls
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS outbound for AWS APIs
+        # Allow PostgreSQL outbound to RDS
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 10.0.0.0/8
+          Description: PostgreSQL outbound to RDS
+        # Allow DNS resolution
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+          Description: DNS resolution
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-lambda-sg"
+        - Key: Purpose
+          Value: "Lambda function security group"
+
+  # Dead Letter Queue for failed Lambda invocations (defined first to avoid circular dependencies)
+  AlpacaFarmApiDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-dlq"
+      # Cost optimization: Short message retention for POC
+      MessageRetentionPeriod: 345600  # 4 days
+      VisibilityTimeout: 60
+
+  # IAM Role for Lambda with least-privilege access
+  AlpacaFarmApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-lambda-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AlpacaFarmApiRDSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Minimal RDS permissions for database connectivity
+              - Effect: Allow
+                Action:
+                  - rds-db:connect
+                Resource: !Sub "arn:aws:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${RDSDatabase}/${RDSUsername}"
+              # CloudWatch Logs permissions (more specific than basic execution role)
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-*:*"
+              # X-Ray tracing permissions (minimal for debugging)
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    "aws:RequestedRegion": !Ref AWS::Region
+              # SQS permissions for Dead Letter Queue
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt AlpacaFarmApiDLQ.Arn
+              # VPC permissions (required when Lambda runs in VPC)
+              - !If
+                - HasVpcConfig
+                - Effect: Allow
+                  Action:
+                    - ec2:CreateNetworkInterface
+                    - ec2:DescribeNetworkInterfaces
+                    - ec2:DeleteNetworkInterface
+                    - ec2:AttachNetworkInterface
+                    - ec2:DetachNetworkInterface
+                  Resource: "*"
+                - !Ref "AWS::NoValue"
+
+  AlpacaFarmApi:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: nodejs20.x
+      BuildProperties:
+        Minify: false
+        Target: "es2020"
+        Sourcemap: false
+        # Use Docker to build native dependencies for Linux
+        UseContainer: true
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-api"
+      CodeUri: ./
+      Handler: dist/lambda/handler.handler
+      Runtime: nodejs20.x
+      Architectures:
+        - x86_64
+      # Cost optimization: Use parameterized memory and timeout
+      MemorySize: !Ref LambdaMemorySize
+      Timeout: !Ref LambdaTimeout
+
+      # Use explicit IAM role for security
+      Role: !GetAtt AlpacaFarmApiRole.Arn
+      # Cost optimization: Minimal tracing
+      Tracing: PassThrough
+      # VPC Configuration (conditional)
+      VpcConfig:
+        !If
+          - HasVpcConfig
+          - SecurityGroupIds:
+              !If
+                - HasSecurityGroups
+                - !Ref SecurityGroupIds
+                - [!Ref LambdaSecurityGroup]
+            SubnetIds: !Ref SubnetIds
+          - !Ref "AWS::NoValue"
+      Environment:
+        Variables:
+          NODE_ENV: production
+          LOG_LEVEL: !If [IsProd, "warn", "info"]
+          RDS_HOST: !Ref RDSHost
+          RDS_PORT: !Ref RDSPort
+          RDS_DATABASE: !Ref RDSDatabase
+          RDS_USERNAME: !Ref RDSUsername
+          RDS_PASSWORD: !Ref RDSPassword
+          DEPLOYMENT_REGION: !Ref AWS::Region
+          # Database SSL configuration (required for RDS)
+          RDS_SSL: "true"
+          # Cost optimization: Disable verbose logging in production
+          DB_POOL_MIN: "1"
+          DB_POOL_MAX: "5"
+          DB_IDLE_TIMEOUT: "30000"
+          DB_CONNECTION_TIMEOUT: "10000"
+          # Database connection settings
+          DB_MAX_CONNECTIONS: "2"
+          PGSSL: "require"
+      Events:
+        AlpacaFarmApiProxy:
+          Type: Api
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+            RestApiId: !Ref AlpacaFarmApiGateway
+        AlpacaFarmApiRoot:
+          Type: Api
+          Properties:
+            Path: /
+            Method: ANY
+            RestApiId: !Ref AlpacaFarmApiGateway
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt AlpacaFarmApiDLQ.Arn
+
+
+
+  AlpacaFarmApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "${AWS::StackName}-api"
+      StageName: !Ref Stage
+      # Cost optimization: Disable caching for POC
+      CacheClusterEnabled: false
+      # Configure binary media types for Swagger UI assets
+      BinaryMediaTypes:
+        - "image/*"
+        - "application/javascript"
+        - "text/css"
+        - "application/octet-stream"
+        - "*/*"
+      Cors:
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"
+        MaxAge: "'600'"
+      GatewayResponses:
+        DEFAULT_4XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        DEFAULT_5XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        THROTTLED:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+          ResponseTemplates:
+            application/json: '{"message": "Request throttled. Please try again later."}'
+
+
+
+  # CloudWatch Log Group for Lambda function with cost optimization
+  AlpacaFarmApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-api"
+      RetentionInDays: !Ref LogRetentionDays
+      # Cost optimization: No KMS encryption for POC
+      # KmsKeyId: !Ref LogGroupKMSKey  # Uncomment for production
+
+  # CloudWatch Log Group for API Gateway
+  ApiGatewayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/apigateway/${AWS::StackName}"
+      RetentionInDays: !Ref LogRetentionDays
+
+  # CloudWatch Alarm for cost monitoring
+  HighLambdaDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-high-lambda-duration"
+      AlarmDescription: "Lambda function duration is consistently high - potential cost impact"
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 25000  # 25 seconds (83% of 30s timeout)
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AlpacaFarmApi
+      TreatMissingData: notBreaching
+
+  # CloudWatch Alarm for error monitoring
+  HighLambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-high-lambda-errors"
+      AlarmDescription: "Lambda function error rate is high"
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AlpacaFarmApi
+      TreatMissingData: notBreaching
+
+Outputs:
+  AlpacaFarmApiUrl:
+    Description: "API Gateway endpoint URL for Alpaca Farm Management API"
+    Value: !Sub "https://${AlpacaFarmApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/"
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiUrl"
+  
+  AlpacaFarmApiFunction:
+    Description: "Alpaca Farm Management Lambda Function ARN"
+    Value: !GetAtt AlpacaFarmApi.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-FunctionArn"
+  
+  AlpacaFarmApiIamRole:
+    Description: "IAM Role created for Alpaca Farm Management function"
+    Value: !GetAtt AlpacaFarmApiRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-FunctionRole"
+  
+  # Cost optimization outputs
+  LambdaConfiguration:
+    Description: "Lambda function cost optimization settings"
+    Value: !Sub "Memory: ${LambdaMemorySize}MB, Timeout: ${LambdaTimeout}s, Concurrency: ${ReservedConcurrency}"
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaConfig"
+  
+  LogRetention:
+    Description: "CloudWatch log retention period for cost optimization"
+    Value: !Sub "${LogRetentionDays} days"
+    Export:
+      Name: !Sub "${AWS::StackName}-LogRetention"
+  
+  CostOptimizationSummary:
+    Description: "Summary of cost optimization features enabled"
+    Value: "Optimized log retention, minimal IAM permissions, monitoring alarms (reserved concurrency must be set manually)"
+    Export:
+      Name: !Sub "${AWS::StackName}-CostOptimization"
+  
+  ReservedConcurrencyNote:
+    Description: "Manual step: Set reserved concurrency for cost control"
+    Value: !Sub "aws lambda put-reserved-concurrency-limit --function-name ${AlpacaFarmApi} --reserved-concurrency-limit ${ReservedConcurrency}"
+    Export:
+      Name: !Sub "${AWS::StackName}-ReservedConcurrencyCommand"
