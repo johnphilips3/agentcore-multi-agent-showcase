@@ -8,10 +8,8 @@ info:
     email: support@alpacaherd.com
 
 servers:
-  - url: http://localhost:3000/api/v1
+  - url: https://zffai9eujf.execute-api.us-west-2.amazonaws.com/dev/api/v1
     description: Development server
-  - url: https://api.alpacaherd.com/v1
-    description: Production server
 
 paths:
   # Alpaca endpoints
@@ -539,8 +537,9 @@ paths:
                         items:
                           $ref: '#/components/schemas/HealthRecord'
         '500':
-          $ref: '#/components/responses/InternalServerError'  # Br
-eeding Records endpoints
+          $ref: '#/components/responses/InternalServerError'
+
+  # Breeding Records endpoints
   /breeding-records:
     get:
       summary: List breeding records
@@ -769,8 +768,9 @@ eeding Records endpoints
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
-          $ref: '#/components/responses/InternalServerError'  # Manage
-ment Activities endpoints
+          $ref: '#/components/responses/InternalServerError'
+
+  # Management Activities endpoints
   /activities:
     get:
       summary: List management activities
@@ -1016,8 +1016,9 @@ ment Activities endpoints
         '422':
           $ref: '#/components/responses/ValidationError'
         '500':
-          $ref: '#/components/responses/InternalServerError'componen
-ts:
+          $ref: '#/components/responses/InternalServerError'
+
+components:
   parameters:
     IdParam:
       name: id

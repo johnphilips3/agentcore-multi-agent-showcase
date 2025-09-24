@@ -1,0 +1,70 @@
+# SAM ignore file - excludes files from Lambda deployment package
+# Only include essential files for Lambda runtime
+
+# Source TypeScript files (we use compiled dist/ files)
+src/
+*.ts
+tsconfig*.json
+vitest*.config.ts
+
+# Development and testing files
+**/*.test.ts
+**/*.test.js
+**/__tests__/
+test/
+tests/
+*.test.*
+coverage/
+
+# Documentation files
+*.md
+docs/
+.kiro/
+
+# Configuration files not needed in Lambda
+.env*
+.gitignore
+samconfig.toml
+deployment-config.json
+cost-optimization-config.md
+debugging-guide.md
+deployment-guide.md
+api-examples.md
+TEST_*.md
+IMPLEMENTATION_SUMMARY.md
+
+# Build artifacts
+.aws-sam/
+build/
+tmp/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Scripts not needed in Lambda
+scripts/
+
+# Demo files
+demo/
+
+# Exclude SQLite3 native binaries (not needed for Lambda - we use PostgreSQL)
+node_modules/sqlite3/build/
+node_modules/sqlite3/lib/binding/
+**/node_sqlite3.node
+
+# Keep only these essential files:
+# - package.json (Lambda needs this)
+# - node_modules/ (runtime dependencies, except sqlite3)
+# - dist/ (compiled code)

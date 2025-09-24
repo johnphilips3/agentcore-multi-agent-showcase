@@ -18,6 +18,7 @@ export interface ApiError {
     field?: string;
     value?: any;
     constraint?: string;
+    originalError?: string;
   };
 }
 

@@ -1,0 +1,158 @@
+{
+  "environments": {
+    "dev": {
+      "stackName": "alpaca-farm-mgmt-storage-dev",
+      "region": "us-east-1",
+      "stage": "dev",
+      "lambda": {
+        "memorySize": 512,
+        "timeout": 30,
+        "reservedConcurrency": 3
+      },
+      "database": {
+        "host": "${RDS_HOST}",
+        "port": 5432,
+        "database": "alpaca_herd",
+        "username": "${RDS_USERNAME}",
+        "password": "${RDS_PASSWORD}",
+        "ssl": true,
+        "maxConnections": 5,
+        "poolMin": 1,
+        "poolMax": 3,
+        "idleTimeout": 30000,
+        "connectionTimeout": 10000
+      },
+      "logging": {
+        "level": "info",
+        "retentionDays": 3
+      },
+      "apiGateway": {
+        "corsEnabled": true,
+        "throttling": {
+          "burstLimit": 100,
+          "rateLimit": 50
+        },
+        "cachingEnabled": false
+      },
+      "costOptimization": {
+        "xrayTracing": "PassThrough",
+        "deadLetterQueue": {
+          "enabled": true,
+          "messageRetentionDays": 4
+        },
+        "monitoring": {
+          "costAlertsEnabled": true,
+          "performanceAlertsEnabled": true
+        }
+      }
+    },
+    "staging": {
+      "stackName": "alpaca-farm-mgmt-storage-staging",
+      "region": "us-east-1",
+      "stage": "staging",
+      "lambda": {
+        "memorySize": 512,
+        "timeout": 30,
+        "reservedConcurrency": 5
+      },
+      "database": {
+        "host": "${RDS_HOST}",
+        "port": 5432,
+        "database": "alpaca_herd",
+        "username": "${RDS_USERNAME}",
+        "password": "${RDS_PASSWORD}",
+        "ssl": true,
+        "maxConnections": 10,
+        "poolMin": 1,
+        "poolMax": 5,
+        "idleTimeout": 30000,
+        "connectionTimeout": 10000
+      },
+      "logging": {
+        "level": "info",
+        "retentionDays": 7
+      },
+      "apiGateway": {
+        "corsEnabled": true,
+        "throttling": {
+          "burstLimit": 200,
+          "rateLimit": 100
+        },
+        "cachingEnabled": false
+      },
+      "costOptimization": {
+        "xrayTracing": "PassThrough",
+        "deadLetterQueue": {
+          "enabled": true,
+          "messageRetentionDays": 4
+        },
+        "monitoring": {
+          "costAlertsEnabled": true,
+          "performanceAlertsEnabled": true
+        }
+      }
+    },
+    "prod": {
+      "stackName": "alpaca-farm-mgmt-storage-prod",
+      "region": "us-east-1",
+      "stage": "prod",
+      "lambda": {
+        "memorySize": 1024,
+        "timeout": 60,
+        "reservedConcurrency": 10
+      },
+      "database": {
+        "host": "${RDS_HOST}",
+        "port": 5432,
+        "database": "alpaca_herd",
+        "username": "${RDS_USERNAME}",
+        "password": "${RDS_PASSWORD}",
+        "ssl": true,
+        "maxConnections": 20,
+        "poolMin": 2,
+        "poolMax": 10,
+        "idleTimeout": 60000,
+        "connectionTimeout": 15000
+      },
+      "logging": {
+        "level": "warn",
+        "retentionDays": 30
+      },
+      "apiGateway": {
+        "corsEnabled": true,
+        "throttling": {
+          "burstLimit": 500,
+          "rateLimit": 250
+        },
+        "cachingEnabled": false
+      },
+      "costOptimization": {
+        "xrayTracing": "PassThrough",
+        "deadLetterQueue": {
+          "enabled": true,
+          "messageRetentionDays": 7
+        },
+        "monitoring": {
+          "costAlertsEnabled": true,
+          "performanceAlertsEnabled": true
+        }
+      }
+    }
+  },
+  "defaults": {
+    "awsProfile": "default",
+    "samConfigFile": "samconfig.toml",
+    "buildDir": ".aws-sam",
+    "templateFile": "template.yaml"
+  },
+  "requiredEnvironmentVariables": [
+    "RDS_HOST",
+    "RDS_USERNAME", 
+    "RDS_PASSWORD"
+  ],
+  "optionalEnvironmentVariables": [
+    "AWS_PROFILE",
+    "AWS_REGION",
+    "LOG_LEVEL"
+  ]
+}

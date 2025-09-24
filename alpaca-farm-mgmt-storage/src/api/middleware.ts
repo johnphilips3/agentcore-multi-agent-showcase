@@ -81,13 +81,17 @@ export function paginationMiddleware(
     // Validate pagination parameters
     validatePaginationQuery(paginationQuery);
 
+    // Ensure page and limit have default values after validation
+    const page = paginationQuery.page ?? 1;
+    const limit = paginationQuery.limit ?? 20;
+
     // Calculate offset
-    const offset = (paginationQuery.page - 1) * paginationQuery.limit;
+    const offset = (page - 1) * limit;
 
     // Add to request object
     req.pagination = {
-      page: paginationQuery.page,
-      limit: paginationQuery.limit,
+      page,
+      limit,
       offset
     };
 
@@ -150,7 +154,7 @@ export function validateRequestQuery<T>(
       validationFn(req.query);
 
       // Store validated query
-      req.validatedQuery = req.query;
+      req.validatedQuery = req.query as T;
 
       next();
     } catch (error) {
