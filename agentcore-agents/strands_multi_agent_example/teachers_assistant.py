@@ -17,6 +17,7 @@ from language_assistant import language_assistant
 from math_assistant import math_assistant
 from computer_science_assistant import computer_science_assistant
 from no_expertise import general_assistant
+from alpaca_farm_mgmt_assistant import farm_assistant
 
 
 # Define a focused system prompt for file operations
@@ -59,7 +60,7 @@ teacher_agent = Agent(
     model=model,
     system_prompt=TEACHER_SYSTEM_PROMPT,
     callback_handler=None,
-    tools=[math_assistant, language_assistant, english_assistant, computer_science_assistant, general_assistant],
+    tools=[farm_assistant, math_assistant, language_assistant, english_assistant, computer_science_assistant, general_assistant],
 )
 
 

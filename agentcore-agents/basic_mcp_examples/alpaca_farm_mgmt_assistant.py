@@ -22,13 +22,6 @@ def fetch_access_token(client_id, client_secret, token_url):
   return response.json()['access_token']
 
 #setting parameters
-parser = argparse.ArgumentParser(
-                    prog='strands_agent',
-                    description='Test Strands Agent with MCP Gateway',
-                    epilog='Input Parameters')
-
-parser.add_argument('--gateway_id', help = "Gateway Id")
-
 os.environ["STRANDS_TOOL_CONSOLE_MODE"] = "enabled"
 
 #create boto3 session and client
@@ -52,12 +45,6 @@ systemPrompt = """
 """
 
 if __name__ == "__main__":
-    args = parser.parse_args()
-
-    #Validations
-    if args.gateway_id is None:
-        raise Exception("Gateway Id is required")
-
     gatewayEndpoint="https://gateway-alpaca-herd-management-avlsfruvrz.gateway.bedrock-agentcore.us-west-2.amazonaws.com/mcp"
     print(f"Gateway Endpoint: {gatewayEndpoint}")
 

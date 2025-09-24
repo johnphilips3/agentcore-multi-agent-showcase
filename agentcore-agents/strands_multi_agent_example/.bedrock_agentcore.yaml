@@ -21,7 +21,7 @@ agents:
     bedrock_agentcore:
       agent_id: teachers_assistant-HVUKwrBAa5
       agent_arn: arn:aws:bedrock-agentcore:us-west-2:339713026409:runtime/teachers_assistant-HVUKwrBAa5
-      agent_session_id: null
+      agent_session_id: 3f77bdcc-4d21-46ce-91d4-9d5437ebe479
     codebuild:
       project_name: bedrock-agentcore-teachers_assistant-builder
       execution_role: arn:aws:iam::339713026409:role/AmazonBedrockAgentCoreSDKCodeBuild-us-west-2-2ad1693c69
