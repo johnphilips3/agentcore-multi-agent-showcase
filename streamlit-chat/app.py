@@ -360,7 +360,7 @@ def invoke_agent_streaming(
 
 def main():
     st.logo("static/agentcore-service-icon.png", size="large")
-    st.title("Amazon Bedrock AgentCore Chat")
+    st.title("Paca Tracker")
 
     # Sidebar for settings
     with st.sidebar:
