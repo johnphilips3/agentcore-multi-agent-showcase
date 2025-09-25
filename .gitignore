@@ -1,6 +1,6 @@
-agentcore-agents/basic-strands-agent/.bedrock_agentcore.yaml
-agentcore-agents/basic-strands-agent/.dockerignore
-agentcore-agents/basic-strands-agent/Dockerfile
+agentcore-agents/alpaca_farm_multi_agent_example/.bedrock_agentcore.yaml
+agentcore-agents/alpaca_farm_multi_agent_example/.dockerignore
+agentcore-agents/alpaca_farm_multi_agent_example/Dockerfile
 alpaca-farm-mgmt-storage/node_modules
 alpaca-farm-mgmt-storage/dist
 alpaca-farm-mgmt-storage/.aws-sam/
