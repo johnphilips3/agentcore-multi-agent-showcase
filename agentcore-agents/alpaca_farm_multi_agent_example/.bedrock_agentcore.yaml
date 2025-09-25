@@ -1,0 +1,86 @@
+default_agent: farm_assistant
+agents:
+  teachers_assistant:
+    name: teachers_assistant
+    entrypoint: teachers_assistant.py
+    platform: linux/arm64
+    container_runtime: docker
+    aws:
+      execution_role: arn:aws:iam::339713026409:role/AmazonBedrockAgentCoreSDKRuntime-us-west-2-2ad1693c69
+      execution_role_auto_create: false
+      account: '339713026409'
+      region: us-west-2
+      ecr_repository: 339713026409.dkr.ecr.us-west-2.amazonaws.com/bedrock-agentcore-teachers_assistant
+      ecr_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+      protocol_configuration:
+        server_protocol: HTTP
+      observability:
+        enabled: true
+    bedrock_agentcore:
+      agent_id: teachers_assistant-HVUKwrBAa5
+      agent_arn: arn:aws:bedrock-agentcore:us-west-2:339713026409:runtime/teachers_assistant-HVUKwrBAa5
+      agent_session_id: 3f77bdcc-4d21-46ce-91d4-9d5437ebe479
+    codebuild:
+      project_name: bedrock-agentcore-teachers_assistant-builder
+      execution_role: arn:aws:iam::339713026409:role/AmazonBedrockAgentCoreSDKCodeBuild-us-west-2-2ad1693c69
+      source_bucket: bedrock-agentcore-codebuild-sources-339713026409-us-west-2
+    authorizer_configuration: null
+    oauth_configuration: null
+  alpaca_farm_assistant:
+    name: alpaca_farm_assistant
+    entrypoint: alpaca_farm_assistant.py
+    platform: linux/arm64
+    container_runtime: docker
+    aws:
+      execution_role: arn:aws:iam::339713026409:role/AmazonBedrockAgentCoreSDKRuntime-us-west-2-970cda51ba
+      execution_role_auto_create: false
+      account: '339713026409'
+      region: us-west-2
+      ecr_repository: 339713026409.dkr.ecr.us-west-2.amazonaws.com/bedrock-agentcore-alpaca_farm_assistant
+      ecr_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+      protocol_configuration:
+        server_protocol: HTTP
+      observability:
+        enabled: true
+    bedrock_agentcore:
+      agent_id: alpaca_farm_assistant-RIxez7GBBb
+      agent_arn: arn:aws:bedrock-agentcore:us-west-2:339713026409:runtime/alpaca_farm_assistant-RIxez7GBBb
+      agent_session_id: null
+    codebuild:
+      project_name: bedrock-agentcore-alpaca_farm_assistant-builder
+      execution_role: arn:aws:iam::339713026409:role/AmazonBedrockAgentCoreSDKCodeBuild-us-west-2-970cda51ba
+      source_bucket: bedrock-agentcore-codebuild-sources-339713026409-us-west-2
+    authorizer_configuration: null
+    oauth_configuration: null
+  farm_assistant:
+    name: farm_assistant
+    entrypoint: farm_assistant.py
+    platform: linux/arm64
+    container_runtime: docker
+    aws:
+      execution_role: arn:aws:iam::339713026409:role/AmazonBedrockAgentCoreSDKRuntime-us-west-2-78d730f54b
+      execution_role_auto_create: false
+      account: '339713026409'
+      region: us-west-2
+      ecr_repository: 339713026409.dkr.ecr.us-west-2.amazonaws.com/bedrock-agentcore-farm_assistant
+      ecr_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+      protocol_configuration:
+        server_protocol: HTTP
+      observability:
+        enabled: true
+    bedrock_agentcore:
+      agent_id: farm_assistant-cBZeLtF6Ku
+      agent_arn: arn:aws:bedrock-agentcore:us-west-2:339713026409:runtime/farm_assistant-cBZeLtF6Ku
+      agent_session_id: null
+    codebuild:
+      project_name: bedrock-agentcore-farm_assistant-builder
+      execution_role: arn:aws:iam::339713026409:role/AmazonBedrockAgentCoreSDKCodeBuild-us-west-2-78d730f54b
+      source_bucket: bedrock-agentcore-codebuild-sources-339713026409-us-west-2
+    authorizer_configuration: null
+    oauth_configuration: null
