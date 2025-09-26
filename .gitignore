@@ -4,3 +4,5 @@ agentcore-agents/alpaca_farm_multi_agent_example/Dockerfile
 alpaca-farm-mgmt-storage/node_modules
 alpaca-farm-mgmt-storage/dist
 alpaca-farm-mgmt-storage/.aws-sam/
+hackathon-docs/*
+agentcore-agents/alpaca_farm_multi_agent_example/langsmith_evaluation/__pycache__/*
