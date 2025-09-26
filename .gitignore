@@ -6,3 +6,4 @@ alpaca-farm-mgmt-storage/dist
 alpaca-farm-mgmt-storage/.aws-sam/
 hackathon-docs/*
 agentcore-agents/alpaca_farm_multi_agent_example/langsmith_evaluation/__pycache__/*
+agentcore-agents/alpaca_farm_multi_agent_example/__pycache__/*

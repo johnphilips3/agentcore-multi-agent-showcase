@@ -3,3 +3,4 @@ boto3
 strands-agents
 strands-agents-tools
 uv
+langsmith>=0.1.0
