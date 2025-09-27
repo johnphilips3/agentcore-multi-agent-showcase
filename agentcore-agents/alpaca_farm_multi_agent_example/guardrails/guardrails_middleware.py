@@ -6,8 +6,8 @@ import logging
 from typing import Any, Callable, Dict, Optional, Union
 from functools import wraps
 
-from guardrails_client import GuardrailsClient
-from guardrails_config import GuardrailsConfig
+from .guardrails_client import GuardrailsClient
+from .guardrails_config import GuardrailsConfig
 
 
 logger = logging.getLogger(__name__)

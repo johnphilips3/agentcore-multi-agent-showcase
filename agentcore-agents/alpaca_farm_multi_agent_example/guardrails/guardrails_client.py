@@ -8,7 +8,7 @@ import logging
 from typing import Dict, List, Optional, Any, Union
 from botocore.exceptions import ClientError
 
-from guardrails_config import GuardrailsConfig
+from .guardrails_config import GuardrailsConfig
 
 
 logger = logging.getLogger(__name__)

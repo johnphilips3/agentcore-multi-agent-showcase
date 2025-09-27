@@ -14,8 +14,12 @@ from strands import Agent, tool
 import json
 import requests
 
-from guardrails_middleware import GuardrailsMiddleware, with_guardrails
-from guardrails_config import GuardrailsConfig
+import sys
+import os
+# Add parent directory to path to import guardrails package
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from guardrails import GuardrailsMiddleware, with_guardrails, GuardrailsConfig
 
 
 logger = logging.getLogger(__name__)
