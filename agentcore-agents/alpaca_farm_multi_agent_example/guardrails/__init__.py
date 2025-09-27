@@ -1,12 +1,17 @@
 """
-Bedrock Guardrails implementation for Alpaca Farm Multi-Agent Example.
+Guardrails package for Bedrock Guardrails integration.
 
-This module provides guardrails functionality to ensure safe and appropriate
-interactions with the alpaca farm management system.
+This package provides middleware and client functionality for integrating
+Amazon Bedrock Guardrails with agent interactions.
 """
 
-from guardrails_client import GuardrailsClient
-from guardrails_config import GuardrailsConfig
-from guardrails_middleware import GuardrailsMiddleware
+from .guardrails_config import GuardrailsConfig
+from .guardrails_client import GuardrailsClient
+from .guardrails_middleware import GuardrailsMiddleware, with_guardrails
 
-__all__ = ['GuardrailsClient', 'GuardrailsConfig', 'GuardrailsMiddleware']
+__all__ = [
+    'GuardrailsConfig',
+    'GuardrailsClient', 
+    'GuardrailsMiddleware',
+    'with_guardrails'
+]
