@@ -7,3 +7,5 @@ alpaca-farm-mgmt-storage/.aws-sam/
 hackathon-docs/*
 agentcore-agents/alpaca_farm_multi_agent_example/langsmith_evaluation/__pycache__/*
 agentcore-agents/alpaca_farm_multi_agent_example/__pycache__/*
+agentcore-agents/alpaca_farm_multi_agent_example/guardrails/__pycache__/*
+agentcore-agents/alpaca_farm_multi_agent_example/guardrails/.env

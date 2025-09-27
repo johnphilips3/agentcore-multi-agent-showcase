@@ -1,5 +1,6 @@
 bedrock-agentcore
 boto3
+botocore
 strands-agents
 strands-agents-tools
 uv
