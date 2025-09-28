@@ -1,0 +1,46 @@
+    {
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "name": "Debug Streamlit App",
+                "type": "debugpy",
+                "request": "launch",
+                "python": "${workspaceFolder}/streamlit-chat/.venv/bin/python",
+                "args": [
+                    "-m",
+                    "streamlit",
+                    "run",
+                    "app.py",
+                    "--server.port=8501"
+                ],
+                "console": "integratedTerminal",
+                "cwd": "${workspaceFolder}/streamlit-chat",
+                "justMyCode": false
+            },
+            {
+                "name": "Debug with Wrapper Script",
+                "type": "debugpy",
+                "request": "launch",
+                "python": "${workspaceFolder}/streamlit-chat/.venv/bin/python",
+                "program": "${workspaceFolder}/streamlit-chat/debug_app.py",
+                "console": "integratedTerminal",
+                "cwd": "${workspaceFolder}/streamlit-chat",
+                "justMyCode": false
+            },
+            {
+                "name": "Debug with Remote Attach",
+                "type": "debugpy",
+                "request": "attach",
+                "connect": {
+                    "host": "localhost",
+                    "port": 5678
+                },
+                "pathMappings": [
+                    {
+                        "localRoot": "${workspaceFolder}/streamlit-chat",
+                        "remoteRoot": "."
+                    }
+                ]
+            }
+        ]
+    }
