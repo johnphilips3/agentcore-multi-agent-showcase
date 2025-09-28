@@ -101,7 +101,7 @@ def alpaca_farm_assistant(query: str) -> str:
 Run the test script to verify everything works:
 
 ```bash
-cd agentcore-agents/alpaca_farm_multi_agent_example/guardrails
+cd guardrails
 python test_guardrails.py
 ```
 
