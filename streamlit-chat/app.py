@@ -8,6 +8,14 @@ import boto3
 import streamlit as st
 from streamlit.logger import get_logger
 
+import sys
+import os
+
+# Add parent directory to path to import guardrails package
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from guardrails import GuardrailsMiddleware, with_guardrails, GuardrailsConfig
+
 logger = get_logger(__name__)
 logger.setLevel("INFO")
 
@@ -79,6 +87,26 @@ def fetch_agent_runtime_versions(
         st.error(f"Error fetching agent runtime versions: {e}")
         return []
 
+def fetch_guardrails(region: str = "us-east") -> List[Dict]:
+    """Fetch available guardrails from bedrock"""
+    try:
+        client = boto3.client("bedrock", region_name=region)
+        response = client.list_guardrails(maxResults=100)
+
+        # Filter only READY versions
+        ready_guardrails = [
+            guardrail
+            for guardrail in response.get("guardrails", [])
+            if guardrail.get("status") == "READY"
+        ]
+
+        # Sort by most recent update time (newest first)
+        ready_guardrails.sort(key=lambda x: x.get("lastUpdatedAt", ""), reverse=True)
+
+        return ready_guardrails
+    except Exception as e:
+        st.error(f"Error fetching guardrails: {e}")
+        return []
 
 def clean_response_text(text: str, show_thinking: bool = True) -> str:
     """Clean and format response text for better presentation"""
@@ -240,23 +268,38 @@ def parse_streaming_chunk(chunk: str) -> str:
         logger.debug("parse_streaming_chunk: All parsing failed, returning chunk as-is")
         return chunk
 
-
 def invoke_agent_streaming(
     prompt: str,
     agent_arn: str,
     runtime_session_id: str,
+    guardrail_id: str,
     region: str = "us-east-1",
     show_tool: bool = True,
 ) -> Iterator[str]:
     """Invoke agent and yield streaming response chunks"""
     try:
+        #Guardrails
+        if guardrail_id:
+            guardrails_config = GuardrailsConfig(
+                guardrail_id=guardrail_id,
+                enable_input_filtering=True,
+                enable_output_filtering=True,
+                aws_region=region
+            )
+            guardrails = GuardrailsMiddleware(guardrails_config)
+            if not guardrails.client.is_content_safe(prompt, source="INPUT"):
+                yield "Input content blocked by guardrail\n"
+                safe_prompt = "Give me guidance on proper use of the system"
+        else:
+            safe_prompt = prompt
+            
         agentcore_client = boto3.client("bedrock-agentcore", region_name=region)
 
         boto3_response = agentcore_client.invoke_agent_runtime(
             agentRuntimeArn=agent_arn,
             qualifier="DEFAULT",
             runtimeSessionId=runtime_session_id,
-            payload=json.dumps({"prompt": prompt}),
+            payload=json.dumps({"prompt": safe_prompt}),
         )
 
         logger.debug(f"contentType: {boto3_response.get('contentType', 'NOT_FOUND')}")
@@ -473,6 +516,52 @@ def main():
         if st.button("Refresh", key="refresh_agents", help="Refresh agent list"):
             st.rerun()
 
+        # Guardrail selection
+        st.subheader("Guardrail Selection")
+
+        # Fetch available agents
+        with st.spinner("Loading available guardrails..."):
+            available_guardrails = fetch_guardrails(region)
+
+        if available_guardrails:
+            # Get unique guardrail names and their IDs
+            unique_guardrails = {}
+            for guardrail in available_guardrails:  
+                name = guardrail.get("name", "Unknown")
+                guardrail_id = guardrail.get("id", "")
+                if name not in unique_guardrails:
+                    unique_guardrails[name] = guardrail_id
+
+            # Create agent name options
+            guardrail_names = list(unique_guardrails.keys())
+
+            # Agent name selection dropdown
+            col1, col2 = st.columns([2, 1])
+
+            with col1:
+                selected_guardrail_name = st.selectbox(
+                    "Guardrail Name",
+                    options=guardrail_names,
+                    help="Choose a guardrail",
+                )
+
+            # Get versions for the selected agent using the specific API
+            if selected_guardrail_name in unique_guardrails:
+                guardrail_id = unique_guardrails[selected_guardrail_name]
+            else:
+                guardrail_id = ""
+        else:
+            st.error("No guardrails found or error loading guardrails")
+            guardrail_id = ""
+
+            # Fallback manual input
+            st.subheader("Manual Guardrail Input")
+            guardrail_id = st.text_input(
+                "Guardrail Id", value="", help="Enter your Bedrock Guardrail Id manually"
+            )
+        if st.button("Refresh", key="refresh_guardrails", help="Refresh guardrails list"):
+            st.rerun()
+
         # Runtime Session ID
         st.subheader("Session Configuration")
 
@@ -564,6 +653,7 @@ def main():
                     prompt,
                     agent_arn,
                     st.session_state.runtime_session_id,
+                    guardrail_id,
                     region,
                     show_tools,
                 ):
