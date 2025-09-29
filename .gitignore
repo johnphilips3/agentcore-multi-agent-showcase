@@ -11,3 +11,10 @@ agentcore-agents/alpaca_farm_multi_agent_example/guardrails/__pycache__/*
 agentcore-agents/alpaca_farm_multi_agent_example/guardrails/.env
 guardrails/.env
 guardrails/__pycache__/*
+nova-sonic-web-app/backend/__pycache__/*
+nova-sonic-web-app/backend/.venv/*
+nova-sonic-web-app/backend/.env
+nova-sonic-web-app/frontend/node_modules/*
+
+
+nova-sonic-web-app/backend.log
