@@ -4,6 +4,8 @@ Async LangSmith Evaluation Setup for Farm Assistant Agent
 
 This module provides an async evaluation framework using LangSmith to test
 the farm_assistant agent with various alpaca farm management scenarios.
+
+Supports both local agent execution and remote AgentCore runtime endpoints.
 """
 
 import os
@@ -13,6 +15,10 @@ from langsmith import Client
 from langsmith.evaluation import aevaluate
 from langsmith.schemas import Run, Example
 import json
+
+# Import configuration and remote client
+from runtime_config import RuntimeConfig
+from remote_client import AgentCoreRemoteClient
 
 # Import your farm assistant from parent directory
 import sys
@@ -32,18 +38,31 @@ except ImportError as e:
 class FarmAssistantEvaluator:
     """Simple evaluator for the farm assistant agent"""
     
-    def __init__(self, langsmith_api_key: str = None):
+    def __init__(self, langsmith_api_key: str = None, runtime_config: RuntimeConfig = None):
         """
         Initialize the evaluator
         
         Args:
             langsmith_api_key: LangSmith API key (can also be set via LANGSMITH_API_KEY env var)
+            runtime_config: Runtime configuration for local vs remote execution
         """
         if langsmith_api_key:
             os.environ["LANGSMITH_API_KEY"] = langsmith_api_key
         
         self.client = Client()
         self.dataset_name = "alpaca_farm_evaluation_basic"
+        
+        # Initialize runtime configuration
+        self.runtime_config = runtime_config or RuntimeConfig.from_environment()
+        print(f"🔧 Runtime mode: {self.runtime_config.mode}")
+        
+        if self.runtime_config.mode == 'remote':
+            print(f"🌐 Remote endpoint: {self.runtime_config.endpoint_url}")
+            print(f"🤖 Agent ID: {self.runtime_config.agent_id}")
+        
+        # Validate configuration
+        if not self.runtime_config.validate():
+            raise ValueError(f"Invalid runtime configuration: {self.runtime_config.get_setup_instructions()}")
         
     def create_evaluation_dataset(self) -> str:
         """Create a basic evaluation dataset with sample farm management queries"""
@@ -123,35 +142,12 @@ class FarmAssistantEvaluator:
         try:
             prompt = inputs.get("prompt", "")
             
-            if FARM_AGENT_AVAILABLE:
-                # Use the actual farm assistant agent
-                response_chunks = []
-                tool_used = None
-                
-                # Create payload for the agent
-                payload = {"prompt": prompt}
-                
-                # Run the async agent and collect streaming response
-                async for chunk in strands_agent_bedrock(payload):
-                    if isinstance(chunk, str):
-                        # Check if this chunk indicates tool usage
-                        if "🔧 Using tool:" in chunk:
-                            # Extract tool name from the chunk
-                            tool_name = chunk.split("🔧 Using tool:")[1].strip()
-                            tool_used = tool_name
-                        else:
-                            # Regular response chunk
-                            response_chunks.append(chunk)
-                
-                # Combine all response chunks
-                full_response = "".join(response_chunks).strip()
-                
-                return {
-                    "response": full_response,
-                    "tool_used": tool_used,
-                    "success": len(full_response) > 0,
-                    "prompt": prompt
-                }
+            if self.runtime_config.mode == 'remote':
+                # Use remote AgentCore runtime endpoint
+                return await self._run_remote_agent(inputs)
+            elif FARM_AGENT_AVAILABLE:
+                # Use the local farm assistant agent
+                return await self._run_local_agent(inputs)
             else:
                 # Fallback to mock response for testing
                 return await self._mock_farm_assistant(inputs)
@@ -161,7 +157,91 @@ class FarmAssistantEvaluator:
                 "response": f"Error: {str(e)}",
                 "tool_used": None,
                 "success": False,
-                "prompt": prompt
+                "prompt": inputs.get("prompt", "")
+            }
+    
+    async def _run_local_agent(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Run the local farm assistant agent
+        
+        Args:
+            inputs: Dictionary containing the prompt
+            
+        Returns:
+            Dictionary with the agent's response and metadata
+        """
+        prompt = inputs.get("prompt", "")
+        response_chunks = []
+        tool_used = None
+        
+        # Create payload for the agent
+        payload = {"prompt": prompt}
+        
+        # Run the async agent and collect streaming response
+        async for chunk in strands_agent_bedrock(payload):
+            if isinstance(chunk, str):
+                # Check if this chunk indicates tool usage
+                if "🔧 Using tool:" in chunk:
+                    # Extract tool name from the chunk
+                    tool_name = chunk.split("🔧 Using tool:")[1].strip()
+                    tool_used = tool_name
+                else:
+                    # Regular response chunk
+                    response_chunks.append(chunk)
+        
+        # Combine all response chunks
+        full_response = "".join(response_chunks).strip()
+        
+        return {
+            "response": full_response,
+            "tool_used": tool_used,
+            "success": len(full_response) > 0,
+            "prompt": prompt,
+            "runtime_mode": "local"
+        }
+    
+    async def _run_remote_agent(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Run the remote AgentCore runtime agent
+        
+        Args:
+            inputs: Dictionary containing the prompt
+            
+        Returns:
+            Dictionary with the agent's response and metadata
+        """
+        prompt = inputs.get("prompt", "")
+        
+        async with AgentCoreRemoteClient(self.runtime_config) as client:
+            response_chunks = []
+            tool_used = None
+            
+            # Create payload for the remote agent
+            payload = {"prompt": prompt}
+            
+            # Call remote agent and collect streaming response
+            async for chunk in client.invoke_agent_stream(payload):
+                if isinstance(chunk, str):
+                    # Check if this chunk indicates tool usage
+                    if "🔧 Using tool:" in chunk:
+                        # Extract tool name from the chunk
+                        tool_name = chunk.split("🔧 Using tool:")[1].strip()
+                        tool_used = tool_name
+                    else:
+                        # Regular response chunk
+                        response_chunks.append(chunk)
+            
+            # Combine all response chunks
+            full_response = "".join(response_chunks).strip()
+            
+            return {
+                "response": full_response,
+                "tool_used": tool_used,
+                "success": len(full_response) > 0,
+                "prompt": prompt,
+                "runtime_mode": "remote",
+                "endpoint": self.runtime_config.endpoint_url,
+                "agent_id": self.runtime_config.agent_id
             }
 
     async def _mock_farm_assistant(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
@@ -253,18 +333,26 @@ class FarmAssistantEvaluator:
         Returns:
             Dictionary with evaluation results
         """
-        print("Starting async LangSmith evaluation for Farm Assistant Agent...")
+        mode_desc = f"({self.runtime_config.mode} mode)"
+        print(f"Starting async LangSmith evaluation for Farm Assistant Agent {mode_desc}...")
         
         # Create dataset
         dataset_id = self.create_evaluation_dataset()
+        
+        # Create experiment name with runtime mode
+        experiment_prefix = f"farm_assistant_{self.runtime_config.mode}_eval"
+        description = f"Evaluation of farm assistant agent in {self.runtime_config.mode} mode"
+        
+        if self.runtime_config.mode == 'remote':
+            description += f" using endpoint {self.runtime_config.endpoint_url}"
         
         # Run async evaluation
         results = await aevaluate(
             self.run_farm_assistant,
             data=self.dataset_name,
             evaluators=[self.evaluate_response_quality],
-            experiment_prefix="farm_assistant_async_eval",
-            description="Async evaluation of farm assistant agent routing and response quality"
+            experiment_prefix=experiment_prefix,
+            description=description
         )
         
         print(f"Evaluation completed! Results: {results}")
@@ -290,16 +378,31 @@ async def main_async():
         print("export LANGSMITH_API_KEY='your-api-key-here'")
         return
     
+    # Initialize runtime configuration
+    try:
+        runtime_config = RuntimeConfig.from_environment()
+        print(f"🔧 Runtime Configuration:")
+        print(runtime_config.get_setup_instructions())
+    except Exception as e:
+        print(f"❌ Configuration error: {e}")
+        return
+    
     # Initialize evaluator
-    evaluator = FarmAssistantEvaluator()
+    evaluator = FarmAssistantEvaluator(runtime_config=runtime_config)
     
     # Run evaluation
     try:
-        print(f"🤖 Farm Agent Available: {FARM_AGENT_AVAILABLE}")
+        print(f"🤖 Farm Agent Available (local): {FARM_AGENT_AVAILABLE}")
+        print(f"🌐 Runtime Mode: {runtime_config.mode}")
+        
         results = await evaluator.run_evaluation()
         print("\n" + "="*50)
         print("EVALUATION SUMMARY")
         print("="*50)
+        print(f"Runtime Mode: {runtime_config.mode}")
+        if runtime_config.mode == 'remote':
+            print(f"Endpoint: {runtime_config.endpoint_url}")
+            print(f"Agent ID: {runtime_config.agent_id}")
         print(f"Results: {results}")
         
     except Exception as e:
@@ -308,7 +411,12 @@ async def main_async():
         print("1. LangSmith API key set")
         print("2. langsmith package installed: pip install langsmith")
         print("3. Proper network access to LangSmith")
-        print("4. Farm assistant dependencies available")
+        if runtime_config.mode == 'local':
+            print("4. Farm assistant dependencies available")
+        else:
+            print("4. Valid AgentCore endpoint configuration")
+            print("5. AWS credentials configured (if required)")
+            print("6. Network access to AgentCore endpoint")
 
 def main():
     """Synchronous main function wrapper"""

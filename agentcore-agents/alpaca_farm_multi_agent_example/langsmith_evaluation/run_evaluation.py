@@ -10,6 +10,7 @@ import sys
 import asyncio
 from langsmith_config import LangSmithConfig, get_sample_dataset
 from langsmith_evaluation import FarmAssistantEvaluator
+from runtime_config import RuntimeConfig
 
 def check_prerequisites():
     """Check if all prerequisites are met"""
@@ -23,22 +24,50 @@ def check_prerequisites():
         print("❌ LangSmith not installed. Run: pip install langsmith")
         return False
     
-    # Check configuration
+    # Check LangSmith configuration
     config = LangSmithConfig()
     if not config.validate_config():
         print(config.get_environment_setup_instructions())
         return False
     
-    print("✅ Configuration valid")
+    print("✅ LangSmith configuration valid")
+    
+    # Check runtime configuration
+    try:
+        runtime_config = RuntimeConfig.from_environment()
+        if not runtime_config.validate():
+            print("❌ Runtime configuration invalid")
+            print(runtime_config.get_setup_instructions())
+            return False
+        
+        print(f"✅ Runtime configuration valid ({runtime_config.mode} mode)")
+        
+        if runtime_config.mode == 'remote':
+            print(f"   🌐 Agent Runtime URL: {runtime_config.endpoint_url}")
+            print(f"   🤖 Agent ID: {runtime_config.agent_id}")
+        
+    except Exception as e:
+        print(f"❌ Runtime configuration error: {e}")
+        return False
+    
     return True
 
 async def run_basic_evaluation_async():
     """Run a basic async evaluation of the farm assistant"""
-    print("\n🚀 Starting Farm Assistant Evaluation...")
+    
+    # Get runtime configuration
+    try:
+        runtime_config = RuntimeConfig.from_environment()
+        mode_desc = f"({runtime_config.mode} mode)"
+    except Exception as e:
+        print(f"❌ Configuration error: {e}")
+        return False
+    
+    print(f"\n🚀 Starting Farm Assistant Evaluation {mode_desc}...")
     
     try:
-        # Initialize evaluator
-        evaluator = FarmAssistantEvaluator()
+        # Initialize evaluator with runtime config
+        evaluator = FarmAssistantEvaluator(runtime_config=runtime_config)
         
         # Run async evaluation
         results = await evaluator.run_evaluation()
@@ -46,6 +75,11 @@ async def run_basic_evaluation_async():
         print("\n" + "="*60)
         print("📊 EVALUATION RESULTS")
         print("="*60)
+        print(f"Runtime Mode: {runtime_config.mode}")
+        
+        if runtime_config.mode == 'remote':
+            print(f"Endpoint: {runtime_config.endpoint_url}")
+            print(f"Agent ID: {runtime_config.agent_id}")
         
         if results:
             print(f"✅ Evaluation completed successfully!")
@@ -60,7 +94,14 @@ async def run_basic_evaluation_async():
         print("1. Verify your LANGSMITH_API_KEY is correct")
         print("2. Check your internet connection")
         print("3. Ensure all dependencies are installed")
-        print("4. Check farm assistant agent dependencies")
+        
+        if runtime_config.mode == 'local':
+            print("4. Check farm assistant agent dependencies")
+        else:
+            print("4. Verify AgentCore endpoint configuration")
+            print("5. Check AWS credentials (if required)")
+            print("6. Ensure network access to AgentCore endpoint")
+        
         return False
     
     return True
@@ -71,10 +112,23 @@ def run_basic_evaluation():
 
 def interactive_mode():
     """Run in interactive mode for testing individual queries"""
-    print("\n🎯 Interactive Testing Mode")
+    
+    # Get runtime configuration
+    try:
+        runtime_config = RuntimeConfig.from_environment()
+        mode_desc = f"({runtime_config.mode} mode)"
+    except Exception as e:
+        print(f"❌ Configuration error: {e}")
+        return
+    
+    print(f"\n🎯 Interactive Testing Mode {mode_desc}")
     print("Type 'quit' to exit")
     
-    evaluator = FarmAssistantEvaluator()
+    if runtime_config.mode == 'remote':
+        print(f"🌐 Using endpoint: {runtime_config.endpoint_url}")
+        print(f"🤖 Agent ID: {runtime_config.agent_id}")
+    
+    evaluator = FarmAssistantEvaluator(runtime_config=runtime_config)
     
     while True:
         try:
@@ -95,6 +149,7 @@ def interactive_mode():
             print(f"\n📝 Response: {result.get('response', 'No response')}")
             print(f"🔧 Tool used: {result.get('tool_used', 'Unknown')}")
             print(f"✅ Success: {result.get('success', False)}")
+            print(f"🌐 Runtime: {result.get('runtime_mode', 'unknown')}")
             
         except KeyboardInterrupt:
             print("\n👋 Goodbye!")
@@ -128,11 +183,28 @@ def main():
             interactive_mode()
             
         elif choice == "3":
+            # Show LangSmith configuration
             config = LangSmithConfig()
-            print(f"\n📋 Current Configuration:")
+            print(f"\n📋 LangSmith Configuration:")
             print(f"   API Key: {'✅ Set' if config.api_key else '❌ Not set'}")
             print(f"   Project: {config.project_name}")
             print(f"   Dataset: {config.dataset_name}")
+            
+            # Show runtime configuration
+            try:
+                runtime_config = RuntimeConfig.from_environment()
+                print(f"\n🔧 Runtime Configuration:")
+                print(f"   Mode: {runtime_config.mode}")
+                if runtime_config.mode == 'remote':
+                    print(f"   Endpoint: {runtime_config.endpoint_url or '❌ Not set'}")
+                    print(f"   Agent ID: {runtime_config.agent_id or '❌ Not set'}")
+                    print(f"   Session ID: {runtime_config.session_id or 'Not set (optional)'}")
+                    print(f"   AWS Region: {runtime_config.aws_region}")
+                
+                print(runtime_config.get_setup_instructions())
+            except Exception as e:
+                print(f"❌ Runtime configuration error: {e}")
+            
             print(config.get_environment_setup_instructions())
             
         else:
