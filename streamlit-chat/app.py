@@ -279,6 +279,7 @@ def invoke_agent_streaming(
     """Invoke agent and yield streaming response chunks"""
     try:
         #Guardrails
+        safe_prompt = prompt
         if guardrail_id:
             guardrails_config = GuardrailsConfig(
                 guardrail_id=guardrail_id,
@@ -290,8 +291,6 @@ def invoke_agent_streaming(
             if not guardrails.client.is_content_safe(prompt, source="INPUT"):
                 yield "Input content blocked by guardrail\n"
                 safe_prompt = "Give me guidance on proper use of the system"
-        else:
-            safe_prompt = prompt
             
         agentcore_client = boto3.client("bedrock-agentcore", region_name=region)
 

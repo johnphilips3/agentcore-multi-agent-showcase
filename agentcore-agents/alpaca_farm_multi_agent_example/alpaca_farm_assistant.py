@@ -22,9 +22,16 @@ ALPACA_FARM_ASSISTANT_SYSTEM_PROMPT = """
    You can provided existing information on the alpacas and save new information on the existing alpacas.
    If there is information that you need to fulfil the request you can ask follow-up questions to gaither more details.
 """
+#Hard coded OAuth - remvove for any production use
 CLIENT_ID = "16j9guvg9mm0pcb2su4qa2kqqj"
 CLIENT_SECRET = "1avfn6dn8unfp3pcp72n2sdieiloonjrebdbs9gs8p4ucjnqbjg0"
 TOKEN_URL = "https://my-domain-qv2gy78a.auth.us-west-2.amazoncognito.com/oauth2/token"
+
+#Set model used for agent - hardcoded for now
+model_id = "global.anthropic.claude-sonnet-4-20250514-v1:0"
+model = BedrockModel(
+    model_id=model_id
+)
 
 def fetch_access_token(client_id, client_secret, token_url):
   response = requests.post(
@@ -72,8 +79,9 @@ def alpaca_farm_assistant(query: str) -> str:
 
         with client:
             tools = client.list_tools_sync()
-            # Create the computer science agent with relevant tools
+            # Create the farm agent with relevant tools
             farm_agent = Agent(
+                model=model,
                 system_prompt=ALPACA_FARM_ASSISTANT_SYSTEM_PROMPT,
                 tools=[tools],
             )
