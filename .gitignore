@@ -1,18 +1,24 @@
-agentcore-agents/alpaca_farm_multi_agent_example/.bedrock_agentcore.yaml
-agentcore-agents/alpaca_farm_multi_agent_example/.dockerignore
-agentcore-agents/alpaca_farm_multi_agent_example/Dockerfile
+# Environment files (secrets, credentials)
+.env
+*.env
+
+# Build artifacts and dependencies
 alpaca-farm-mgmt-storage/node_modules
 alpaca-farm-mgmt-storage/dist
 alpaca-farm-mgmt-storage/.aws-sam/
-hackathon-docs/*
-agentcore-agents/alpaca_farm_multi_agent_example/langsmith_evaluation/__pycache__/*
-agentcore-agents/alpaca_farm_multi_agent_example/__pycache__/*
-agentcore-agents/alpaca_farm_multi_agent_example/guardrails/__pycache__/*
-agentcore-agents/alpaca_farm_multi_agent_example/guardrails/.env
-guardrails/.env
-guardrails/__pycache__/*
-nova-sonic-web-app/backend/__pycache__/*
-nova-sonic-web-app/backend/.venv/*
-nova-sonic-web-app/backend/.env
 nova-sonic-web-app/frontend/node_modules/*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# IDE / OS
+.DS_Store
+
+# Project-specific
+agentcore-agents/alpaca_farm_multi_agent_example/.bedrock_agentcore.yaml
+agentcore-agents/alpaca_farm_multi_agent_example/.dockerignore
+agentcore-agents/alpaca_farm_multi_agent_example/Dockerfile
+hackathon-docs/*
 nova-sonic-web-app/backend.log
